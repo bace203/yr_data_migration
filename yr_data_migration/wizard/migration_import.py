@@ -298,7 +298,14 @@ class YrMigrationImport(models.TransientModel):
         to_create = []
         for item in items:
             code, barcode = text(item.get('code')), text(item.get('barcode'))
-            tmpl = by_code.get(code) or by_barcode.get(barcode)
+            owner = by_barcode.get(barcode) if barcode else None
+            # a line with a reference matches on it: two fastmag references may share a barcode
+            if code:
+                tmpl = by_code.get(code)
+                if not tmpl and owner and owner is not True and not owner.default_code:
+                    tmpl = owner                       # article created before without reference
+            else:
+                tmpl = owner
             if barcode and (barcode in seen_barcodes or (by_barcode.get(barcode) and by_barcode[barcode] != tmpl)):
                 errors.append((item['_line'], code, _('code-barres %s déjà utilisé par un autre article : '
                                                      'article repris sans code-barres', barcode)))
@@ -330,7 +337,12 @@ class YrMigrationImport(models.TransientModel):
                 if not vals['active']:
                     stats['archived'] += 1
             supplier = self._supplier(item.get('supplier_code'), item.get('supplier_name'), supplier_cache, stats)
+            if tmpl is True:          # same reference twice in the file: first line wins
+                stats['skipped'] += 1
+                continue
             if tmpl:
+                if code and not tmpl.default_code:
+                    vals['default_code'] = code
                 if barcode and not tmpl.barcode:
                     vals['barcode'] = barcode
                 if price is not None and self.update_prices:

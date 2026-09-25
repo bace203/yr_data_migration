@@ -99,6 +99,27 @@ class TestMigrationImport(TransactionCase):
             [('default_code', '=', 'T100200500')]).active)
         self.assertIn('Mis à jour : <b>3</b>', wizard.result)
 
+    def test_articles_imported_before_by_crm_screen(self):
+        """Articles already created by Fidélité & CRM › Import articles: completed, not duplicated."""
+        rows = [ARTICLE_HEADER,
+                article('T100191452', '9990005648712', 'Brillance vinaigre', 'CAPILLAIRE TEST', 'SOIN CHEVEUX', 12),
+                article('T100191954', '9990005648712', 'Capillaire brillance', 'CAPILLAIRE TEST', 'SOIN CHEVEUX', 12)]
+        crm = self.env['loyalty.product.import'].create({'file': xlsx(rows), 'filename': 'a.xlsx'})
+        crm.action_import()
+        Template = self.env['product.template']
+        first = Template.search([('default_code', '=', 'T100191452')])
+        second = Template.search([('default_code', '=', 'T100191954')])
+        self.assertTrue(first and second)
+        self.assertFalse(first.yr_line)
+        wizard = self._import(rows)
+        self.assertEqual(Template.search_count([('default_code', 'in', ['T100191452', 'T100191954'])]), 2)
+        for tmpl in first | second:
+            self.assertEqual((tmpl.yr_line, tmpl.yr_brand, tmpl.yr_status), ('CN3', 'YVES ROCHER', 'Actif'))
+            self.assertEqual(tmpl.yr_sub_axe_id.name, 'SOIN CHEVEUX')
+            self.assertEqual(tmpl.yr_axe_id.name, 'CAPILLAIRE TEST')
+        self.assertEqual((first.barcode, second.barcode), ('9990005648712', False))
+        self.assertIn('Mis à jour : <b>2</b>', wizard.result)
+
     def test_article_barcode_conflict(self):
         rows = [ARTICLE_HEADER,
                 article('TA1', '9990000000001', 'Un', 'CORPS TEST', 'DOUCHE TEST', 5),
