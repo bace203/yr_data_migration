@@ -104,12 +104,13 @@ class TestMigrationImport(TransactionCase):
         rows = [ARTICLE_HEADER,
                 article('T100191452', '9990005648712', 'Brillance vinaigre', 'CAPILLAIRE TEST', 'SOIN CHEVEUX', 12),
                 article('T100191954', '9990005648712', 'Capillaire brillance', 'CAPILLAIRE TEST', 'SOIN CHEVEUX', 12)]
-        crm = self.env['loyalty.product.import'].create({'file': xlsx(rows), 'filename': 'a.xlsx'})
-        crm.action_import()
+        # articles created before by the CRM import (without the fastmag fields)
         Template = self.env['product.template']
+        Template.create([{'name': 'Brillance vinaigre', 'default_code': 'T100191452', 'barcode': '9990005648712',
+                          'is_storable': True},
+                         {'name': 'Capillaire brillance', 'default_code': 'T100191954', 'is_storable': True}])
         first = Template.search([('default_code', '=', 'T100191452')])
         second = Template.search([('default_code', '=', 'T100191954')])
-        self.assertTrue(first and second)
         self.assertFalse(first.yr_line)
         wizard = self._import(rows)
         self.assertEqual(Template.search_count([('default_code', 'in', ['T100191452', 'T100191954'])]), 2)
@@ -119,6 +120,19 @@ class TestMigrationImport(TransactionCase):
             self.assertEqual(tmpl.yr_axe_id.name, 'CAPILLAIRE TEST')
         self.assertEqual((first.barcode, second.barcode), ('9990005648712', False))
         self.assertIn('Mis à jour : <b>2</b>', wizard.result)
+
+    def test_crm_import_screen_does_the_fastmag_import(self):
+        rows = [ARTICLE_HEADER, article('T100102999', '9990005911999', 'Stick', 'MAQUILLAGE TEST', 'TEINT TEST', 9)]
+        crm = self.env['loyalty.product.import'].create({'file': xlsx(rows)})       # no file name sent
+        crm.action_import()
+        tmpl = self.env['product.template'].search([('default_code', '=', 'T100102999')])
+        self.assertEqual((tmpl.yr_line, tmpl.yr_sub_axe_id.name, tmpl.yr_brand), ('CN3', 'TEINT TEST', 'YVES ROCHER'))
+        self.assertIn('Articles (fiche article fastmag)', crm.result)
+        # an ordinary article file keeps the CRM import
+        other = self.env['loyalty.product.import'].create({
+            'file': base64.b64encode('Code article;Désignation;Prix\nTX1;Autre;3\n'.encode()), 'filename': 'a.csv'})
+        other.action_import()
+        self.assertTrue(self.env['product.template'].search([('default_code', '=', 'TX1')]))
 
     def test_article_barcode_conflict(self):
         rows = [ARTICLE_HEADER,
