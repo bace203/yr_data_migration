@@ -16,9 +16,10 @@
         <field name="model">pos.order</field>
         <field name="inherit_id" ref="point_of_sale.view_pos_order_tree"/>
         <field name="arch" type="xml">
-            <field name="user_id" position="after">
+            <!-- at the end: the list may have been changed by other modules (no cashier column) -->
+            <xpath expr="//list" position="inside">
                 <field name="yr_seller_id" optional="show"/>
-            </field>
+            </xpath>
         </field>
     </record>
 </odoo>
