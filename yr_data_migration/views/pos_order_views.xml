@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="pos_order_form_seller" model="ir.ui.view">
+        <field name="name">pos.order.form.seller</field>
+        <field name="model">pos.order</field>
+        <field name="inherit_id" ref="point_of_sale.view_pos_pos_form"/>
+        <field name="arch" type="xml">
+            <field name="user_id" position="after">
+                <field name="yr_seller_id" options="{'no_create': True}"/>
+                <field name="yr_seller_code_legacy" invisible="not yr_seller_code_legacy"/>
+            </field>
+        </field>
+    </record>
+    <record id="pos_order_list_seller" model="ir.ui.view">
+        <field name="name">pos.order.list.seller</field>
+        <field name="model">pos.order</field>
+        <field name="inherit_id" ref="point_of_sale.view_pos_order_tree"/>
+        <field name="arch" type="xml">
+            <field name="user_id" position="after">
+                <field name="yr_seller_id" optional="show"/>
+            </field>
+        </field>
+    </record>
+</odoo>

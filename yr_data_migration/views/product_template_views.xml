@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="product_template_form_fastmag" model="ir.ui.view">
+        <field name="name">product.template.form.fastmag</field>
+        <field name="model">product.template</field>
+        <field name="inherit_id" ref="product.product_template_form_view"/>
+        <field name="arch" type="xml">
+            <xpath expr="//notebook" position="inside">
+                <page string="Fiche fastmag" name="yr_fastmag">
+                    <group>
+                        <group>
+                            <field name="yr_axe_id" options="{'no_create': True}"/>
+                            <field name="yr_sub_axe_id" options="{'no_create': True}"/>
+                            <field name="yr_category_code"/>
+                            <field name="yr_brand"/>
+                            <field name="yr_line"/>
+                            <field name="yr_site"/>
+                        </group>
+                        <group>
+                            <field name="yr_nature"/>
+                            <field name="yr_packaging"/>
+                            <field name="yr_gender"/>
+                            <field name="yr_status"/>
+                            <field name="yr_create_date_legacy"/>
+                            <field name="yr_supplier_code"/>
+                        </group>
+                    </group>
+                </page>
+            </xpath>
+        </field>
+    </record>
+    <record id="product_template_list_fastmag" model="ir.ui.view">
+        <field name="name">product.template.list.fastmag</field>
+        <field name="model">product.template</field>
+        <field name="inherit_id" ref="product.product_template_tree_view"/>
+        <field name="arch" type="xml">
+            <field name="name" position="after">
+                <field name="yr_axe_id" optional="show"/>
+                <field name="yr_sub_axe_id" optional="show"/>
+                <field name="yr_line" optional="hide"/>
+                <field name="yr_nature" optional="hide"/>
+                <field name="yr_status" optional="hide"/>
+            </field>
+        </field>
+    </record>
+    <record id="product_template_search_fastmag" model="ir.ui.view">
+        <field name="name">product.template.search.fastmag</field>
+        <field name="model">product.template</field>
+        <field name="inherit_id" ref="product.product_template_search_view"/>
+        <field name="arch" type="xml">
+            <field name="name" position="after">
+                <field name="yr_axe_id"/>
+                <field name="yr_sub_axe_id"/>
+                <field name="yr_line"/>
+            </field>
+            <xpath expr="//search" position="inside">
+                <group>
+                    <filter name="group_yr_axe" string="Axe" context="{'group_by': 'yr_axe_id'}"/>
+                    <filter name="group_yr_sub_axe" string="Sous-axe" context="{'group_by': 'yr_sub_axe_id'}"/>
+                </group>
+            </xpath>
+        </field>
+    </record>
+</odoo>

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="loyalty_store_form_fastmag" model="ir.ui.view">
+        <field name="name">loyalty.store.form.fastmag</field>
+        <field name="model">loyalty.store</field>
+        <field name="inherit_id" ref="loyalty_tier_marketing.loyalty_store_view_form"/>
+        <field name="arch" type="xml">
+            <field name="code" position="after">
+                <field name="yr_fastmag_code" placeholder="ex. YR_YOUG"/>
+            </field>
+        </field>
+    </record>
+    <record id="loyalty_store_list_fastmag" model="ir.ui.view">
+        <field name="name">loyalty.store.list.fastmag</field>
+        <field name="model">loyalty.store</field>
+        <field name="inherit_id" ref="loyalty_tier_marketing.loyalty_store_view_list"/>
+        <field name="arch" type="xml">
+            <field name="code" position="after">
+                <field name="yr_fastmag_code" optional="show"/>
+            </field>
+        </field>
+    </record>
+</odoo>

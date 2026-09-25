@@ -1,0 +1,5 @@
+id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
+access_yr_migration_import,yr.migration.import,model_yr_migration_import,loyalty_tier_marketing.group_loyalty_tier_manager,1,1,1,1
+access_yr_migration_import_stock,yr.migration.import stock,model_yr_migration_import,stock.group_stock_manager,1,1,1,1
+access_yr_legacy_purchase_user,yr.legacy.purchase user,model_yr_legacy_purchase,base.group_user,1,0,0,0
+access_yr_legacy_purchase_manager,yr.legacy.purchase manager,model_yr_legacy_purchase,loyalty_tier_marketing.group_loyalty_tier_manager,1,1,1,1

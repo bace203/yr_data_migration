@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="group_migration_data" model="res.groups">
+        <field name="name">YR : voir les données de migration figées</field>
+        <field name="comment">Montant TTC et date de migration sur la fiche client (lecture seule, figés).</field>
+        <field name="users" eval="[(4, ref('base.user_admin'))]"/>
+    </record>
+</odoo>

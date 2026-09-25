@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- fastmag history, right under the customer summary of Fidélité & CRM -->
+    <record id="res_partner_form_fastmag" model="ir.ui.view">
+        <field name="name">res.partner.form.fastmag</field>
+        <field name="model">res.partner</field>
+        <field name="inherit_id" ref="loyalty_tier_marketing.res_partner_view_form_tier"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='crm_store_id']" position="before">
+                <field name="yr_gender" invisible="is_company"/>
+            </xpath>
+            <xpath expr="//page[@name='crm_insight']" position="inside">
+                <group string="Historique fastmag" name="yr_fastmag" invisible="not yr_legacy_code">
+                    <group>
+                        <field name="yr_legacy_code"/>
+                        <field name="yr_legacy_old_code" invisible="not yr_legacy_old_code"/>
+                        <field name="yr_entry_date"/>
+                        <field name="yr_first_purchase_legacy"/>
+                    </group>
+                    <group>
+                        <field name="yr_legacy_amount" groups="yr_data_migration.group_migration_data"/>
+                        <field name="yr_migration_date" groups="yr_data_migration.group_migration_data"/>
+                        <field name="yr_legacy_segment"/>
+                        <field name="yr_seller_code"/>
+                        <field name="yr_npai"/>
+                        <field name="yr_currency_id" invisible="1"/>
+                    </group>
+                </group>
+                <field name="yr_legacy_purchase_ids" readonly="1" invisible="not yr_legacy_purchase_ids">
+                    <list limit="20">
+                        <field name="date" widget="date"/>
+                        <field name="store_id"/>
+                        <field name="shop_code" optional="hide"/>
+                        <field name="amount" sum="Total"/>
+                    </list>
+                </field>
+            </xpath>
+        </field>
+    </record>
+    <record id="res_partner_search_fastmag" model="ir.ui.view">
+        <field name="name">res.partner.search.fastmag</field>
+        <field name="model">res.partner</field>
+        <field name="inherit_id" ref="base.view_res_partner_filter"/>
+        <field name="arch" type="xml">
+            <field name="name" position="after">
+                <field name="yr_legacy_code" string="Code fastmag"/>
+            </field>
+        </field>
+    </record>
+</odoo>

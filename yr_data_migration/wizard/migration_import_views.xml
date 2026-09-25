@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="yr_migration_import_view_form" model="ir.ui.view">
+        <field name="name">yr.migration.import.form</field>
+        <field name="model">yr.migration.import</field>
+        <field name="arch" type="xml">
+            <form string="Reprise fastmag">
+                <field name="state" invisible="1"/>
+                <div invisible="state != 'draft'">
+                    <p class="text-muted">
+                        Choisissez un fichier fastmag : il est reconnu tout seul. Ordre conseillé :
+                        <b>articles</b>, <b>clients</b> (2017-2026 puis ancien système), puis <b>CA clients</b>.
+                        Un fichier peut être réimporté : rien n'est créé en double.
+                    </p>
+                    <group>
+                        <group>
+                            <field name="file" filename="filename"/>
+                            <field name="filename" invisible="1"/>
+                            <field name="file_type" invisible="not file"
+                                   decoration-success="file_type" placeholder="Non reconnu : choisissez"/>
+                        </group>
+                    </group>
+                    <group invisible="file_type != 'article'" string="Articles">
+                        <field name="create_categories"/>
+                        <field name="update_prices"/>
+                        <field name="archive_inactive"/>
+                    </group>
+                    <group invisible="file_type not in ('client_new', 'client_old')" string="Clients">
+                        <field name="update_existing"/>
+                        <field name="year_2000_unknown" invisible="file_type != 'client_old'"/>
+                    </group>
+                </div>
+                <div invisible="state != 'done'">
+                    <field name="result"/>
+                </div>
+                <footer>
+                    <button name="action_import" string="Importer" type="object" class="btn-primary"
+                            invisible="state != 'draft'"/>
+                    <button string="Fermer" class="btn-secondary" special="cancel"/>
+                </footer>
+            </form>
+        </field>
+    </record>
+
+    <record id="action_yr_migration_import" model="ir.actions.act_window">
+        <field name="name">Reprise fastmag</field>
+        <field name="res_model">yr.migration.import</field>
+        <field name="view_mode">form</field>
+        <field name="target">new</field>
+    </record>
+    <menuitem id="menu_yr_migration_import" name="Reprise fastmag (articles, clients, CA)"
+              parent="loyalty_tier_marketing.menu_loyalty_tier_config" action="action_yr_migration_import"
+              sequence="90"/>
+    <menuitem id="menu_yr_migration_import_stock" name="Reprise fastmag (articles)"
+              parent="stock.menu_stock_config_settings" action="action_yr_migration_import" sequence="90"
+              groups="stock.group_stock_manager"/>
+</odoo>
