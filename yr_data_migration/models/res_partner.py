@@ -20,7 +20,7 @@ class ResPartner(models.Model):
     yr_legacy_segment = fields.Char('Segment fastmag', help='Ex. FID, OC, PA, MO')
     yr_npai = fields.Boolean('NPAI', help='N\'habite pas à l\'adresse indiquée (courrier revenu).')
 
-    # purchases made before Odoo: frozen once set, visible to the « données de migration » group only
+    # purchases made before Posify: frozen once set, visible to the « données de migration » group only
     yr_legacy_amount = fields.Monetary('Montant TTC à la migration', currency_field='yr_currency_id', readonly=True,
                                        copy=False, groups='yr_data_migration.group_migration_data')
     yr_migration_date = fields.Date('Date de migration', readonly=True, copy=False,

@@ -1,4 +1,4 @@
-# Reprise fastmag → Odoo 18 (Yves Rocher) — `yr_data_migration`
+# Reprise fastmag → Posify 18 (Yves Rocher) — `yr_data_migration`
 
 Dossier d'addons : copier `yr_data_migration/` dans `/home/Administrateur/addons` (le nom du dossier doit rester
 `yr_data_migration`, sans espace), puis :
@@ -12,7 +12,7 @@ sudo systemctl start odoo
 Dépend de **Fidélité & CRM** (`loyalty_tier_marketing`), `point_of_sale`, `purchase`. Remplace l'ancien dossier
 « added fields » (à supprimer du serveur : son nom avec un espace empêchait la mise à jour de la liste des apps).
 
-## Import (dans Odoo, pas de script)
+## Import (dans Posify, pas de script)
 
 **Fidélité & CRM › Configuration › Reprise fastmag** (ou Inventaire › Configuration). Choisir un fichier : son type
 est **reconnu tout seul** d'après les en-têtes.

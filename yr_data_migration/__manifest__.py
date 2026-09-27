@@ -5,7 +5,7 @@
     'category': 'Sales',
     'summary': 'Champs fastmag manquants (articles, clients, vendeur PdV) et import des fichiers fastmag',
     'description': """
-Reprise des données fastmag (Yves Rocher) dans Odoo 18
+Reprise des données fastmag (Yves Rocher) dans Posify 18
 ======================================================
 * Article : site, catégorie fastmag, marque, ligne, nature, conditionnement, genre, statut, date de création,
   fournisseur. Les axes / sous-axes deviennent des catégories du point de vente (axe › sous-axe).
@@ -13,7 +13,7 @@ Reprise des données fastmag (Yves Rocher) dans Odoo 18
   CA / visites / dernier achat / dernier magasin des 2 dernières années, segment et vendeuse fastmag, NPAI.
   Le numéro de carte devient le numéro client (et le code-barres scanné en caisse).
 * Commande PdV : vendeur (différent du caissier).
-* Import dans Odoo : un seul écran, le type de fichier est reconnu tout seul (articles, clients 2017-2026,
+* Import dans Posify : un seul écran, le type de fichier est reconnu tout seul (articles, clients 2017-2026,
   clients ancien système, CA clients). Réimportable sans doublon.
 S'appuie sur Fidélité & CRM (loyalty_tier_marketing) pour la fiche client (naissance, n° client, magasin).
 """,

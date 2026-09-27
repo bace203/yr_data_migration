@@ -2,7 +2,7 @@
 """fastmag purchase history (« CA clients » file): one line per customer, day and store.
 
 The lines are added to the CRM order view (loyalty.crm.order, source « fastmag »), so the customer status, first /
-last purchase, turnover, segments and dashboards of Fidélité & CRM include the purchases made before Odoo.
+last purchase, turnover, segments and dashboards of Fidélité & CRM include the purchases made before Posify.
 """
 from odoo import api, fields, models
 from odoo.tools import SQL
