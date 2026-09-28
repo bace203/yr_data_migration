@@ -19,6 +19,9 @@ OLD_HEADER = ['compteur', 'numCliente', 'numClienteOLD', 'naissance', 'nom_x', '
               'Seg1', 'Seg2', 'Seg3', 'Seg4', 'Segment', 'dateLastSegment', 'Tel2', 'CdB_H', 'CdB_date', 'SegLettre',
               'Rue2', 'Rue3', 'Champ1', 'sexe']
 CA_HEADER = ['CodeMag', 'date', 'Client', 'Cartefidelite', 'Nom', 'Prenom', 'TOTALCA']
+DETAIL_HEADER = ['CodeMag', 'Vente', 'date', 'Utilisateur', 'Vendeur', 'Client', 'Cartefidelite', 'Nom', 'Prenom',
+                 'Barcode', 'gencod', 'Reffournisseur', 'Designation', 'Axe', 'Lignes', 'Quantite', 'Prix', 'Remise',
+                 'Total', 'Motif', 'Commentaire']
 
 
 def xlsx(rows):
@@ -213,13 +216,13 @@ class TestMigrationImport(TransactionCase):
         recent, older = today - timedelta(days=20), today - timedelta(days=300)
         rows = [CA_HEADER,
                 ['YR_YOUG', datetime.combine(recent, datetime.min.time()), 6, 990025739, 'FERCHICHI', 'SAMEH', 246.3],
-                ['YR_AZUR', datetime.combine(older, datetime.min.time()), 6, 990025739, 'FERCHICHI', 'SAMEH', 1328.8],
+                ['YR_XQZW', datetime.combine(older, datetime.min.time()), 6, 990025739, 'FERCHICHI', 'SAMEH', 1328.8],
                 ['YR_MANAR', datetime(2026, 3, 19), 29, 999999999, 'INCONNUE', 'X', 21.8]]
         # history first: kept until the customer exists
         wizard = self._import(rows)
         self.assertEqual(wizard.file_type, 'client_ca')
         self.assertIn('Cartes sans fiche client : <b>2</b>', wizard.result)
-        self.assertIn('YR_AZUR', wizard.result)                  # store codes to map
+        self.assertIn('YR_XQZW', wizard.result)                  # store codes to map
         Legacy = self.env['yr.legacy.purchase']
         self.assertEqual(Legacy.search_count([('card', '=', '990025739')]), 2)
         self._import([NEW_HEADER, self._new_row(990025739, 'FERCHICHI', 'SAMEH', datetime(1990, 1, 2))])
@@ -250,3 +253,96 @@ class TestMigrationImport(TransactionCase):
         self.assertFalse(wizard.file_type)
         with self.assertRaises(UserError):
             wizard.action_import()
+
+    # ── store list ───────────────────────────────────────────────────────
+    def test_store_list(self):
+        Store = self.env['loyalty.store']
+        azur = Store.create({'name': 'Azurq', 'code': 'AZRQ'})
+        wizard = self._import([['Magasin', 'Code'], ['AZURQ', 923], ['ZEPHYRQ TEST', 920], ['eshop', 926]])
+        self.assertEqual(wizard.file_type, 'stores')
+        self.assertEqual((azur.code, azur.yr_fastmag_code), ('923', 'AZRQ'))       # the former code stays known
+        zephyr = Store.search([('code', '=', '920')])
+        self.assertEqual((zephyr.name, zephyr.store_type), ('ZEPHYRQ TEST', 'store'))
+        self.assertEqual(Store.search([('code', '=', '926')]).store_type, 'website')
+        # again, and without header row: nothing duplicated
+        wizard = self._import([['ZEPHYRQ TEST', 920], ['NABEUL TEST', 919]])
+        self.assertEqual(wizard.file_type, 'stores')
+        self.assertEqual(Store.search_count([('name', '=', 'ZEPHYRQ TEST')]), 1)
+        self.assertTrue(Store.search([('code', '=', '919'), ('name', '=', 'NABEUL TEST')]))
+        # « YR_ZEPHYR » of the fastmag files is recognised from the name, and remembered
+        stores = self.env['yr.migration.import']._stores()
+        self.assertEqual(stores.get('YR_ZEPHYRQ'), zephyr)
+        self.assertIn('YR_ZEPHYRQ', zephyr.yr_fastmag_code)
+
+    # ── sales detail ─────────────────────────────────────────────────────
+    def _detail(self, ticket, day, cashier, seller, card, ref, ean, name, qty, price, discount, total, reason=None):
+        return ['YR_YOUG', ticket, day, cashier, seller, 168479 if card else 0, card, 'SOUISSI' if card else None,
+                'WAEL' if card else None, ref, ean, 56748, name, 'MAQUILLAGE', 'CN3', qty, price, discount, total,
+                reason, None]
+
+    def test_sales_detail(self):
+        product = self.env['product.product'].create({'name': 'Crayon khôl test', 'default_code': '900106131',
+                                                      'barcode': '3660009567488', 'list_price': 23})
+        cashier = self.env['hr.employee'].create({'name': 'Rim Caissière', 'yr_fastmag_name': 'RIM'})
+        self._import([NEW_HEADER, self._new_row(9940133181, 'SOUISSI', 'WAEL', datetime(1990, 1, 2))])
+        day = datetime.combine(date.today() - timedelta(days=3), datetime.min.time())
+        rows = [DETAIL_HEADER,
+                self._detail(9199659, day, 'RIM', 'JBELI TEST', None, 900106131, 3660009567488, 'CRAYON', 1, 23, 0, 23),
+                self._detail(9199659, day, 'RIM', 'JBELI TEST', None, 'DTT', 75229, 'DROIT DE TIMBRE', 1, 0.1, 0, 0.1),
+                self._detail(9199667, day, 'RIM', 'SLIMENI TEST', 9940133181, 'X1', 3660009567488, 'CRAYON', 2, 23, 0,
+                             46),
+                self._detail(9199667, day, 'RIM', 'SLIMENI TEST', 9940133181, 'INCONNU', None, 'CREME', 1, 18, 100, 0,
+                             'CADEAU_PTS'),
+                self._detail(9199667, day, 'RIM', 'SLIMENI TEST', 9940133181, 'DTT', 75229, 'DROIT DE TIMBRE', 1, 0.1,
+                             0, 0.1)]
+        wizard = self._import(rows)
+        self.assertEqual(wizard.file_type, 'sales_detail')
+        Line = self.env['yr.legacy.sale.line']
+        lines = Line.search([('shop_code', '=', 'YR_YOUG'), ('ticket', 'in', ['9199659', '9199667'])])
+        self.assertEqual(len(lines), 5)
+        first = lines.filtered(lambda l: l.ticket == '9199659' and l.sequence == 1)
+        self.assertEqual((first.product_id, first.store_id, first.cashier_id), (product, self.store, cashier))
+        self.assertEqual((first.seller_name, first.seller_id.name), ('JBELI TEST', 'JBELI TEST'))  # seller created
+        self.assertTrue(lines.filtered(lambda l: l.product_ref == 'DTT').mapped('is_stamp') == [True, True])
+        self.assertEqual(lines.filtered(lambda l: l.product_ref == 'X1').product_id, product)       # by EAN
+        gift = lines.filtered(lambda l: l.reason == 'CADEAU_PTS')
+        self.assertEqual((gift.discount, gift.amount, gift.product_id.id), (100, 0, False))
+        wael = self.env['res.partner'].search([('customer_code', '=', '9940133181')])
+        self.assertEqual(lines.filtered(lambda l: l.ticket == '9199667').partner_id, wael)
+        # purchase history of the customer: one visit, the total of the ticket
+        purchase = self.env['yr.legacy.purchase'].search([('card', '=', '9940133181')])
+        self.assertEqual((len(purchase), purchase.store_id), (1, self.store))
+        self.assertAlmostEqual(purchase.amount, 46.1)
+        self.assertEqual(wael.crm_last_order_date, day.date())
+        # re-import: nothing duplicated, employees not created twice
+        self._import(rows)
+        self.assertEqual(Line.search_count([('shop_code', '=', 'YR_YOUG'), ('ticket', 'in', ['9199659', '9199667'])]), 5)
+        self.assertEqual(self.env['hr.employee'].search_count([('name', '=', 'JBELI TEST')]), 1)
+        self.assertEqual(self.env['yr.legacy.purchase'].search_count([('card', '=', '9940133181')]), 1)
+        # a seller created later in Employés is attached with « Rattacher aux employés »
+        self._import(rows, create_sellers=False)
+        slimeni = lines.filtered(lambda l: l.seller_name == 'SLIMENI TEST')
+        slimeni.seller_id.unlink()
+        self.assertFalse(slimeni.seller_id)
+        employee = self.env['hr.employee'].create({'name': 'Slimeni Maram', 'yr_fastmag_name': 'slimeni test'})
+        Line._link_employees()
+        self.assertEqual(slimeni.seller_id, employee)
+
+    # ── seller chosen at the till ────────────────────────────────────────
+    def test_pos_order_seller(self):
+        seller = self.env['hr.employee'].create({'name': 'Vendeuse test'})
+        config = self.env['pos.config'].create({'name': 'Caisse vendeur test'})
+        self.assertEqual(config.yr_seller_mode, 'none')      # enabled on the existing tills at install
+        config.yr_seller_mode = 'required'
+        self.assertIn({'id': seller.id, 'name': 'Vendeuse test'}, config.yr_seller_data)
+        other = self.env['hr.employee'].create({'name': 'Autre test'})
+        config.yr_seller_employee_ids = other
+        self.assertEqual(config.yr_seller_data, [{'id': other.id, 'name': 'Autre test'}])
+        config.yr_seller_mode = 'none'
+        self.assertEqual(config.yr_seller_data, [{'id': other.id, 'name': 'Autre test'}])
+        Order = self.env['pos.order']
+        vals = Order._yr_seller_vals({'yr_seller_ref': seller.id})
+        self.assertEqual(vals['yr_seller_id'], seller.id)
+        self.assertFalse(Order._yr_seller_vals({'yr_seller_ref': 0})['yr_seller_id'])
+        self.assertFalse(Order._yr_seller_vals({'yr_seller_ref': 999999999})['yr_seller_id'])
+        self.assertEqual(Order._yr_seller_vals({'yr_seller_id': seller.id})['yr_seller_ref'], seller.id)

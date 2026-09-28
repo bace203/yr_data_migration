@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="yr_legacy_sale_line_view_list" model="ir.ui.view">
+        <field name="name">yr.legacy.sale.line.list</field>
+        <field name="model">yr.legacy.sale.line</field>
+        <field name="arch" type="xml">
+            <list string="Ventes fastmag" create="0" edit="0">
+                <header>
+                    <button name="action_link_employees" type="object" string="Rattacher aux employés"
+                            display="always" groups="loyalty_tier_marketing.group_loyalty_tier_manager"/>
+                </header>
+                <field name="date"/>
+                <field name="store_id" optional="show"/>
+                <field name="shop_code" optional="hide"/>
+                <field name="ticket"/>
+                <field name="cashier_id" optional="show"/>
+                <field name="cashier_name" optional="hide"/>
+                <field name="seller_id" optional="show"/>
+                <field name="seller_name" optional="show"/>
+                <field name="partner_id" optional="show"/>
+                <field name="card" optional="hide"/>
+                <field name="product_id" optional="show"/>
+                <field name="name" optional="show"/>
+                <field name="axe" optional="hide"/>
+                <field name="qty" sum="Total"/>
+                <field name="price_unit" optional="hide"/>
+                <field name="discount" optional="show"/>
+                <field name="amount" sum="Total"/>
+                <field name="reason" optional="hide"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="yr_legacy_sale_line_view_pivot" model="ir.ui.view">
+        <field name="name">yr.legacy.sale.line.pivot</field>
+        <field name="model">yr.legacy.sale.line</field>
+        <field name="arch" type="xml">
+            <pivot string="Ventes par vendeur" sample="1">
+                <field name="seller_name" type="row"/>
+                <field name="store_id" type="col"/>
+                <field name="amount" type="measure"/>
+            </pivot>
+        </field>
+    </record>
+
+    <record id="yr_legacy_sale_line_view_graph" model="ir.ui.view">
+        <field name="name">yr.legacy.sale.line.graph</field>
+        <field name="model">yr.legacy.sale.line</field>
+        <field name="arch" type="xml">
+            <graph string="Ventes par vendeur" type="bar" sample="1">
+                <field name="seller_name"/>
+                <field name="amount" type="measure"/>
+            </graph>
+        </field>
+    </record>
+
+    <record id="yr_legacy_sale_line_view_search" model="ir.ui.view">
+        <field name="name">yr.legacy.sale.line.search</field>
+        <field name="model">yr.legacy.sale.line</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="seller_name" string="Vendeur"/>
+                <field name="cashier_name" string="Utilisateur"/>
+                <field name="ticket"/>
+                <field name="partner_id"/>
+                <field name="card"/>
+                <field name="product_id"/>
+                <field name="name"/>
+                <field name="store_id"/>
+                <filter name="articles" string="Articles (sans timbre)" domain="[('is_stamp', '=', False)]"/>
+                <filter name="identified" string="Clients identifiés" domain="[('card', '!=', False)]"/>
+                <filter name="gifts" string="Offerts / remisés" domain="[('discount', '>', 0)]"/>
+                <filter name="no_seller" string="Vendeur non rattaché" domain="[('seller_id', '=', False)]"/>
+                <separator/>
+                <filter name="date" string="Date" date="date"/>
+                <group>
+                    <filter name="by_seller" string="Vendeur" context="{'group_by': 'seller_name'}"/>
+                    <filter name="by_cashier" string="Utilisateur (caissier)" context="{'group_by': 'cashier_name'}"/>
+                    <filter name="by_store" string="Magasin" context="{'group_by': 'store_id'}"/>
+                    <filter name="by_axe" string="Axe" context="{'group_by': 'axe'}"/>
+                    <filter name="by_day" string="Jour" context="{'group_by': 'date:day'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_yr_legacy_sale_line" model="ir.actions.act_window">
+        <field name="name">Ventes fastmag (détail)</field>
+        <field name="res_model">yr.legacy.sale.line</field>
+        <field name="view_mode">pivot,list,graph</field>
+        <field name="context">{'search_default_articles': 1}</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">Aucune vente fastmag importée</p>
+            <p>Importez le fichier « Détail ventes » dans Configuration › Reprise fastmag.</p>
+        </field>
+    </record>
+    <menuitem id="menu_yr_legacy_sale_line" name="Ventes fastmag par vendeur"
+              parent="loyalty_tier_marketing.menu_loyalty_tier_dashboard" action="action_yr_legacy_sale_line"
+              sequence="90"/>
+    <menuitem id="menu_yr_legacy_sale_line_pos" name="Ventes fastmag par vendeur"
+              parent="point_of_sale.menu_point_rep" action="action_yr_legacy_sale_line" sequence="90"
+              groups="point_of_sale.group_pos_manager"/>
+</odoo>

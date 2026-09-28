@@ -6,7 +6,7 @@
         <field name="inherit_id" ref="point_of_sale.view_pos_pos_form"/>
         <field name="arch" type="xml">
             <field name="user_id" position="after">
-                <field name="yr_seller_id" options="{'no_create': True}"/>
+                <field name="yr_seller_id" readonly="0" options="{'no_create': True}"/>
                 <field name="yr_seller_code_legacy" invisible="not yr_seller_code_legacy"/>
             </field>
         </field>
@@ -19,6 +19,17 @@
             <!-- at the end: the list may have been changed by other modules (no cashier column) -->
             <xpath expr="//list" position="inside">
                 <field name="yr_seller_id" optional="show"/>
+            </xpath>
+        </field>
+    </record>
+    <record id="pos_order_search_seller" model="ir.ui.view">
+        <field name="name">pos.order.search.seller</field>
+        <field name="model">pos.order</field>
+        <field name="inherit_id" ref="point_of_sale.view_pos_order_filter"/>
+        <field name="arch" type="xml">
+            <xpath expr="//search" position="inside">
+                <field name="yr_seller_id"/>
+                <filter name="yr_by_seller" string="Vendeur" context="{'group_by': 'yr_seller_id'}"/>
             </xpath>
         </field>
     </record>

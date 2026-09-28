@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<templates xml:space="preserve">
+    <t t-name="yr_data_migration.ControlButtons" t-inherit="point_of_sale.ControlButtons" t-inherit-mode="extension">
+        <xpath expr="//div[hasclass('control-buttons-modal')]" position="inside">
+            <button t-if="pos.yrSellers.length" class="yr_seller_button btn btn-secondary btn-lg py-5"
+                    t-on-click="() => this.clickYrSeller()">
+                <i class="fa fa-user-circle me-1" role="img" aria-label="Vendeur" title="Vendeur"/>
+                <t t-esc="yrSellerLabel"/>
+            </button>
+        </xpath>
+    </t>
+    <t t-name="yr_data_migration.ReceiptHeader" t-inherit="point_of_sale.ReceiptHeader" t-inherit-mode="extension">
+        <xpath expr="//div[hasclass('cashier')]" position="after">
+            <div t-if="props.data.yr_seller" class="yr_seller">Vendeur : <t t-esc="props.data.yr_seller"/></div>
+        </xpath>
+    </t>
+</templates>

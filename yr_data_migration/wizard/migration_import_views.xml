@@ -9,7 +9,8 @@
                 <div invisible="state != 'draft'">
                     <p class="text-muted">
                         Choisissez un fichier fastmag : il est reconnu tout seul. Ordre conseillé :
-                        <b>articles</b>, <b>clients</b> (2017-2026 puis ancien système), puis <b>CA clients</b>.
+                        <b>magasins</b>, <b>articles</b>, <b>clients</b> (2017-2026 puis ancien système), puis
+                        <b>CA clients</b> et <b>détail des ventes</b>.
                         Un fichier peut être réimporté : rien n'est créé en double.
                     </p>
                     <group>
@@ -25,6 +26,14 @@
                         <field name="update_prices"/>
                         <field name="archive_inactive"/>
                     </group>
+                    <group invisible="file_type != 'sales_detail'" string="Détail des ventes">
+                        <field name="create_sellers"/>
+                        <field name="update_purchases"/>
+                    </group>
+                    <div invisible="file_type != 'stores'" class="text-muted mb-2">
+                        Une ligne par magasin : nom et code (ex. AZUR | 23). Les magasins absents sont créés,
+                        les autres reçoivent le code (l'ancien code reste reconnu). « eshop » devient le site web.
+                    </div>
                     <group invisible="file_type not in ('client_new', 'client_old')" string="Clients">
                         <field name="update_existing"/>
                         <field name="year_2000_unknown" invisible="file_type != 'client_old'"/>
@@ -48,7 +57,7 @@
         <field name="view_mode">form</field>
         <field name="target">new</field>
     </record>
-    <menuitem id="menu_yr_migration_import" name="Reprise fastmag (articles, clients, CA)"
+    <menuitem id="menu_yr_migration_import" name="Reprise fastmag (magasins, articles, clients, ventes)"
               parent="loyalty_tier_marketing.menu_loyalty_tier_config" action="action_yr_migration_import"
               sequence="90"/>
     <menuitem id="menu_yr_migration_import_stock" name="Reprise fastmag (articles)"

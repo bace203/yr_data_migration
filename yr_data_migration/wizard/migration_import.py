@@ -22,6 +22,8 @@ FILE_TYPES = [
     ('client_new', 'Clients 2017-2026 (CardNumbre…)'),
     ('client_old', 'Clients ancien système (numCliente…)'),
     ('client_ca', 'CA clients (2 dernières années)'),
+    ('sales_detail', 'Détail des ventes (ticket, utilisateur, vendeur)'),
+    ('stores', 'Liste des magasins (magasin, code)'),
 ]
 # columns of each file (normalised header → key); the first ones identify the file
 COLUMNS = {
@@ -49,13 +51,67 @@ COLUMNS = {
         'cartefidelite': 'card', 'totalca': 'amount', 'codemag': 'shop', 'date': 'date', 'client': 'fm_id',
         'nom': 'lastname', 'prenom': 'firstname',
     },
+    'sales_detail': {
+        'codemag': 'shop', 'vente': 'ticket', 'date': 'date', 'utilisateur': 'cashier', 'vendeur': 'seller',
+        'client': 'fm_id', 'cartefidelite': 'card', 'nom': 'lastname', 'prenom': 'firstname', 'barcode': 'ref',
+        'gencod': 'ean', 'reffournisseur': 'supplier_ref', 'designation': 'name', 'axe': 'axe', 'lignes': 'line',
+        'quantite': 'qty', 'prix': 'price', 'remise': 'discount', 'total': 'total', 'motif': 'reason',
+        'commentaire': 'comment',
+    },
+    'stores': {'magasin': 'name', 'nommagasin': 'name', 'code': 'code', 'codemagasin': 'code'},
 }
 SIGNATURE = {
     'article': {'refarticle', 'eanbar'},
     'client_new': {'cardnumbre'},
     'client_old': {'numcliente'},
     'client_ca': {'cartefidelite', 'totalca'},
+    'sales_detail': {'vente', 'utilisateur', 'vendeur'},
+    'stores': {'magasin', 'code'},
 }
+STAMP_REFS = {'DTT', 'TIMBRE'}      # « droit de timbre sur ticket »: not an article
+
+
+class StoreIndex(dict):
+    """fastmag shop code → store. Unknown « YR_AZUR » codes are matched on the store name (AZUR, YOUG → YOUGOSLAVIE)
+    when only one store fits, and the code is then saved on the store (« Code magasin fastmag »)."""
+
+    def __init__(self, stores):
+        super().__init__()
+        self.records = stores
+        for store in stores:
+            for code in filter(None, [store.code] + (store.yr_fastmag_code or '').split(',')):
+                self[code.strip().upper()] = store
+
+    def _resolve(self, code):
+        code = (code or '').strip().upper()
+        if not code:
+            return None
+        if dict.__contains__(self, code):
+            return dict.__getitem__(self, code)
+        key = norm(re.sub(r'^YR[_\s-]*', '', code, flags=re.I))
+        found = self.records.browse()
+        if key:
+            found = self.records.filtered(lambda s: norm(s.code) == key) or \
+                self.records.filtered(lambda s: norm(s.name) == key) or \
+                self.records.filtered(lambda s: norm(s.name).startswith(key))
+        if len(found) != 1:
+            self[code] = None
+            return None
+        found.sudo().yr_fastmag_code = ','.join(filter(None, [found.yr_fastmag_code, code]))
+        self[code] = found
+        return found
+
+    def get(self, code, default=None):
+        return self._resolve(code) or default
+
+    def __contains__(self, code):
+        return bool(self._resolve(code))
+
+    def __getitem__(self, code):
+        store = self._resolve(code)
+        if not store:
+            raise KeyError(code)
+        return store
 
 
 def norm(text):
@@ -145,12 +201,21 @@ class YrMigrationImport(models.TransientModel):
              'jour et le mois sont alors repris.')
     update_existing = fields.Boolean('Compléter les clients existants', default=True,
                                      help='Les champs vides de la fiche sont complétés ; rien n\'est effacé.')
+    # sales detail
+    create_sellers = fields.Boolean(
+        'Créer les vendeurs manquants (Employés)', default=True,
+        help='Chaque vendeur du fichier devient un employé, proposé ensuite dans la liste des vendeurs en caisse. '
+             'Les utilisateurs (caissiers) sont seulement rattachés aux employés existants.')
+    update_purchases = fields.Boolean(
+        'Alimenter l\'historique d\'achats des clients', default=True,
+        help='Total par carte, jour et magasin, comme le fichier « CA clients » (sans doublon avec lui) : '
+             'statut client, CA, segments de Fidélité & CRM.')
     state = fields.Selection([('draft', 'draft'), ('done', 'done')], default='draft')
     result = fields.Html('Résultat', readonly=True)
 
     # ── reading ──────────────────────────────────────────────────────────
-    def _rows(self):
-        """Header (normalised) + data rows, empty rows skipped."""
+    def _rows(self, raw=False):
+        """Header (normalised, or as is with raw=True) + data rows, empty rows skipped."""
         content = base64.b64decode(self.file or b'')
         name = (self.filename or '').lower()
         if name.endswith(('.xlsx', '.xlsm')) or content[:2] == b'PK':
@@ -173,7 +238,7 @@ class YrMigrationImport(models.TransientModel):
                 continue
             if header is None:
                 header = [norm(c) for c in row]
-                yield header
+                yield list(row) if raw else header
                 continue
             yield list(row)
         if header is None:
@@ -189,7 +254,16 @@ class YrMigrationImport(models.TransientModel):
                 header = set(next(wizard._rows()))
             except Exception:  # noqa: BLE001 - unreadable file: reported when importing
                 continue
-            wizard.file_type = next((kind for kind, keys in SIGNATURE.items() if keys <= header), False)
+            wizard.file_type = next((kind for kind, keys in SIGNATURE.items() if keys <= header), False) or \
+                ('stores' if wizard._is_store_list() else False)
+
+    def _is_store_list(self):
+        """A list without header row: store name, numeric code (« CARREFOUR | 2 »)."""
+        try:
+            first = [c for c in next(self._rows(raw=True)) if c not in (None, '')]
+        except Exception:  # noqa: BLE001
+            return False
+        return len(first) == 2 and number(first[1]) is not None and number(first[0]) is None
 
     def _records(self, kind):
         rows = self._rows()
@@ -228,6 +302,8 @@ class YrMigrationImport(models.TransientModel):
             'categories': _('Catégories PdV créées'), 'suppliers': _('Fournisseurs créés'),
             'archived': _('Articles archivés'), 'unknown_cards': _('Cartes sans fiche client'),
             'unknown_stores': _('Lignes avec magasin inconnu'), 'customers': _('Clients avec historique'),
+            'tickets': _('Tickets'), 'purchases': _('Achats clients (historique CRM)'),
+            'employees': _('Vendeurs créés (Employés)'), 'unknown_products': _('Lignes sans article connu'),
         }
         html = '<p><b>%s</b></p><ul>' % html_escape(dict(FILE_TYPES)[self.file_type])
         for key, label in labels.items():
@@ -373,11 +449,7 @@ class YrMigrationImport(models.TransientModel):
 
     # ── customers ────────────────────────────────────────────────────────
     def _stores(self):
-        stores = {}
-        for store in self.env['loyalty.store'].search([]):
-            for code in filter(None, [store.code] + (store.yr_fastmag_code or '').split(',')):
-                stores[code.strip().upper()] = store
-        return stores
+        return StoreIndex(self.env['loyalty.store'].search([]))
 
     def _existing_customers(self, cards):
         Partner = self.env['res.partner'].with_context(active_test=False)
@@ -514,7 +586,11 @@ class YrMigrationImport(models.TransientModel):
             key = (card, datetime.combine(day, datetime.min.time()).replace(hour=12), text(item.get('shop')).upper())
             visit = visits.setdefault(key, {'amount': 0.0, 'client': text(item.get('fm_id'))})
             visit['amount'] += number(item.get('amount')) or 0.0
-        stores = self._stores()
+        self._save_purchases(visits, stats, errors)
+
+    def _save_purchases(self, visits, stats, errors, created='created', updated='updated', stores=None):
+        """visits: {(card, datetime at noon, shop): {'amount', 'client'}} → yr.legacy.purchase (upsert)."""
+        stores = stores if stores is not None else self._stores()
         unknown_shops = {shop for _card, _day, shop in visits if shop and shop not in stores}
         if unknown_shops:
             stats['stores_missing'] = unknown_shops
@@ -536,7 +612,7 @@ class YrMigrationImport(models.TransientModel):
                     vals['store_id'] = store.id
                 if vals:
                     line.write(vals)
-                    stats['updated'] += 1
+                    stats[updated] += 1
                 continue
             if shop and not store:
                 stats['unknown_stores'] += 1
@@ -546,10 +622,10 @@ class YrMigrationImport(models.TransientModel):
                 'legacy_client_id': visit['client'] or False,
             })
             if len(to_create) >= 5000:
-                stats['created'] += len(Legacy.create(to_create))
+                stats[created] += len(Legacy.create(to_create))
                 to_create = []
         if to_create:
-            stats['created'] += len(Legacy.create(to_create))
+            stats[created] += len(Legacy.create(to_create))
         Legacy._link_partners(cards)
         partner_ids = set()
         for chunk in range(0, len(cards), 5000):
@@ -563,6 +639,146 @@ class YrMigrationImport(models.TransientModel):
             stats['unknown_cards'] = unknown
             errors.append(('-', '', _('%s carte(s) sans fiche client pour l\'instant : leurs achats sont gardés et '
                                       'seront rattachés à l\'import des fichiers clients.', unknown)))
+
+    # ── store list: magasin, code ────────────────────────────────────────
+    def _import_stores(self, stats, errors):
+        """Creates the missing stores, sets the code of the others (matched on code, then on name)."""
+        rows = self._rows(raw=True)
+        first = next(rows)
+        header = [norm(c) for c in first]
+        if {'magasin', 'code'} <= set(header):
+            name_idx, code_idx = header.index('magasin'), header.index('code')
+        else:       # no header row: name, code
+            name_idx, code_idx = 0, 1
+            rows = iter([first] + list(rows))
+        Store = self.env['loyalty.store'].with_context(active_test=False)
+        stores = Store.search([])
+        for line_no, row in enumerate(rows, start=2):
+            row = list(row) + [None, None]
+            name, code = text(row[name_idx]), text(row[code_idx])
+            if not name or not code:
+                if name or code:
+                    errors.append((line_no, name or code, _('nom du magasin ou code manquant')))
+                continue
+            stats['rows'] += 1
+            store = stores.filtered(lambda s: (s.code or '').strip().upper() == code.upper()) or \
+                stores.filtered(lambda s: norm(s.name) == norm(name))
+            if len(store) > 1:
+                errors.append((line_no, name, _('plusieurs magasins correspondent : %s',
+                                                ', '.join(store.mapped('name')))))
+                continue
+            if store:
+                vals = {}
+                if store.code != code:
+                    # the former code stays known for the files that still use it
+                    vals['code'] = code
+                    vals['yr_fastmag_code'] = ','.join(filter(None, [store.yr_fastmag_code, store.code]))
+                if not store.active:
+                    vals['active'] = True
+                if vals:
+                    store.write(vals)
+                    stats['updated'] += 1
+                else:
+                    stats['skipped'] += 1
+                continue
+            web = any(word in norm(name) for word in ('eshop', 'siteweb', 'website', 'ecommerce'))
+            stores |= Store.create({'name': name, 'code': code, 'store_type': 'website' if web else 'store'})
+            stats['created'] += 1
+
+    # ── sales detail: one line per ticket line, cashier and seller ───────
+    def _import_sales_detail(self, stats, errors):
+        SaleLine = self.env['yr.legacy.sale.line'].sudo()
+        stores = self._stores()
+        employees = SaleLine._employee_index()
+        Employee = self.env['hr.employee'].sudo()
+        Product = self.env['product.product'].with_context(active_test=False)
+        items, refs, eans, tickets, rank = [], set(), set(), set(), defaultdict(int)
+        for item in self._records('sales_detail'):
+            shop, ticket, day = text(item.get('shop')).upper(), text(item.get('ticket')), parse_date(item.get('date'))
+            if not shop and not ticket:
+                continue
+            if not shop or not ticket or not day:
+                errors.append((item['_line'], ticket, _('magasin, n° de vente ou date manquant')))
+                continue
+            stats['rows'] += 1
+            rank[(shop, ticket)] += 1
+            item.update(shop=shop, ticket=ticket, day=day, sequence=rank[(shop, ticket)])
+            ref = text(item.get('ref'))
+            item['stamp'] = ref.upper() in STAMP_REFS
+            if not item['stamp']:
+                refs.add(ref)
+                eans.add(text(item.get('ean')))
+            tickets.add((shop, ticket))
+            items.append(item)
+        stats['tickets'] = len(tickets)
+        products = {}
+        refs.discard('')
+        eans.discard('')
+        for product in Product.search(['|', ('default_code', 'in', list(refs)), ('barcode', 'in', list(eans))]):
+            products.setdefault(('ref', product.default_code), product)
+            products.setdefault(('ean', product.barcode), product)
+        existing = {}
+        shops = list({shop for shop, _ticket in tickets})
+        for line in SaleLine.search([('shop_code', 'in', shops), ('ticket', 'in', list({t for _s, t in tickets}))]):
+            existing[(line.shop_code, line.ticket, line.sequence)] = line
+
+        def employee(name, create, store):
+            key = ' '.join(name.upper().split())
+            if not key:
+                return False
+            if key not in employees and create:
+                employees[key] = Employee.create({
+                    'name': name, 'company_id': (store.company_id if store else self.env.company).id})
+                stats['employees'] += 1
+            return employees.get(key, Employee).id or False
+
+        visits, to_create, cards = {}, [], set()
+        for item in items:
+            store = stores.get(item['shop'])
+            if not store:
+                stats['stores_missing'] = stats.get('stores_missing') or set()
+                stats['stores_missing'].add(item['shop'])
+            card = text(item.get('card'))
+            card = '' if card in ('0', '') else card
+            ref, ean = text(item.get('ref')), text(item.get('ean'))
+            product = False if item['stamp'] else products.get(('ref', ref)) or products.get(('ean', ean))
+            if not item['stamp'] and not product:
+                stats['unknown_products'] += 1
+            total = number(item.get('total')) or 0.0
+            cashier, seller = text(item.get('cashier')), text(item.get('seller'))
+            vals = {
+                'shop_code': item['shop'], 'store_id': store.id if store else False,
+                'company_id': (store.company_id if store else self.env.company).id,
+                'ticket': item['ticket'], 'sequence': item['sequence'], 'date': item['day'],
+                'cashier_name': cashier or False, 'cashier_id': employee(cashier, False, store),
+                'seller_name': seller or False, 'seller_id': employee(seller, self.create_sellers, store),
+                'card': card or False, 'legacy_client_id': text(item.get('fm_id')) if card else False,
+                'product_ref': ref or False, 'barcode': ean or False, 'product_id': product.id if product else False,
+                'name': text(item.get('name')) or False, 'axe': text(item.get('axe')) or False,
+                'product_line': text(item.get('line')) or False, 'is_stamp': item['stamp'],
+                'qty': number(item.get('qty')) or 0.0, 'price_unit': number(item.get('price')) or 0.0,
+                'discount': number(item.get('discount')) or 0.0, 'amount': total,
+                'reason': text(item.get('reason')) or False, 'comment': text(item.get('comment')) or False,
+            }
+            line = existing.get((item['shop'], item['ticket'], item['sequence']))
+            if line:
+                line.write(vals)
+                stats['updated'] += 1
+            else:
+                to_create.append(vals)
+            if card:
+                cards.add(card)
+                key = (card, datetime.combine(item['day'], datetime.min.time()).replace(hour=12), item['shop'])
+                visit = visits.setdefault(key, {'amount': 0.0, 'client': text(item.get('fm_id'))})
+                visit['amount'] += total
+            if len(to_create) >= 5000:
+                stats['created'] += len(SaleLine.create(to_create))
+                to_create = []
+        if to_create:
+            stats['created'] += len(SaleLine.create(to_create))
+        SaleLine._link_partners(list(cards))
+        if visits and self.update_purchases:
+            self._save_purchases(visits, stats, errors, created='purchases', updated='purchases', stores=stores)
 
     def _refresh_crm(self, partner_ids):
         """Customer status, first / last purchase, turnover of Fidélité & CRM, now (normally hourly)."""

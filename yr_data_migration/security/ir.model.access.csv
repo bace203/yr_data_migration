@@ -3,3 +3,5 @@ access_yr_migration_import,yr.migration.import,model_yr_migration_import,loyalty
 access_yr_migration_import_stock,yr.migration.import stock,model_yr_migration_import,stock.group_stock_manager,1,1,1,1
 access_yr_legacy_purchase_user,yr.legacy.purchase user,model_yr_legacy_purchase,base.group_user,1,0,0,0
 access_yr_legacy_purchase_manager,yr.legacy.purchase manager,model_yr_legacy_purchase,loyalty_tier_marketing.group_loyalty_tier_manager,1,1,1,1
+access_yr_legacy_sale_line_user,yr.legacy.sale.line user,model_yr_legacy_sale_line,base.group_user,1,0,0,0
+access_yr_legacy_sale_line_manager,yr.legacy.sale.line manager,model_yr_legacy_sale_line,loyalty_tier_marketing.group_loyalty_tier_manager,1,1,1,1

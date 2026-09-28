@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="res_config_settings_view_form_seller" model="ir.ui.view">
+        <field name="name">res.config.settings.form.pos.seller</field>
+        <field name="model">res.config.settings</field>
+        <field name="inherit_id" ref="point_of_sale.res_config_settings_view_form"/>
+        <field name="arch" type="xml">
+            <setting id="multiple_employee_session" position="after">
+                <setting id="yr_seller_setting" string="Vendeur avant paiement"
+                         help="Au clic sur « Paiement », choisir le vendeur qui a servi le client (le caissier reste la personne connectée).">
+                    <field name="pos_yr_seller_mode"/>
+                    <div class="content-group mt8" invisible="pos_yr_seller_mode == 'none'">
+                        <div class="row">
+                            <label for="pos_yr_seller_employee_ids" string="Vendeurs" class="col-lg-3 o_light_label"/>
+                            <field name="pos_yr_seller_employee_ids" widget="many2many_tags"
+                                   placeholder="Tous les employés" options="{'no_create': True}"/>
+                        </div>
+                    </div>
+                </setting>
+            </setting>
+        </field>
+    </record>
+</odoo>
