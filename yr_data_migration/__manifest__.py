@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 {
     'name': 'YR – Reprise fastmag (articles, clients, CA)',
-    'version': '18.0.1.1.0',
+    'version': '18.0.1.2.0',
     'category': 'Sales',
     'summary': 'Champs fastmag manquants (articles, clients, vendeur en caisse) et import des fichiers fastmag',
     'description': """

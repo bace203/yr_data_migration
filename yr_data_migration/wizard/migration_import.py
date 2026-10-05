@@ -24,7 +24,11 @@ FILE_TYPES = [
     ('client_ca', 'CA clients (2 dernières années)'),
     ('sales_detail', 'Détail des ventes (ticket, utilisateur, vendeur)'),
     ('stores', 'Liste des magasins (magasin, code)'),
+    ('sellers', 'Vendeurs par magasin (code magasin, vendeur, code logistique)'),
+    ('workbook', 'Classeur à plusieurs feuilles (magasins, vendeurs…)'),
 ]
+# a workbook: its sheets are imported in this order (stores first: the other files refer to them)
+SHEET_ORDER = ['stores', 'sellers', 'article', 'client_new', 'client_old', 'client_ca', 'sales_detail']
 # columns of each file (normalised header → key); the first ones identify the file
 COLUMNS = {
     'article': {
@@ -56,9 +60,12 @@ COLUMNS = {
         'client': 'fm_id', 'cartefidelite': 'card', 'nom': 'lastname', 'prenom': 'firstname', 'barcode': 'ref',
         'gencod': 'ean', 'reffournisseur': 'supplier_ref', 'designation': 'name', 'axe': 'axe', 'lignes': 'line',
         'quantite': 'qty', 'prix': 'price', 'remise': 'discount', 'total': 'total', 'motif': 'reason',
+        'prixnet': 'net_price',
         'commentaire': 'comment',
     },
     'stores': {'magasin': 'name', 'nommagasin': 'name', 'code': 'code', 'codemagasin': 'code'},
+    'sellers': {'codemagasin': 'shop', 'codemag': 'shop', 'magasin': 'shop', 'vendeurs': 'seller',
+                'vendeur': 'seller', 'codelogistique': 'logistic_code'},
 }
 SIGNATURE = {
     'article': {'refarticle', 'eanbar'},
@@ -67,6 +74,7 @@ SIGNATURE = {
     'client_ca': {'cartefidelite', 'totalca'},
     'sales_detail': {'vente', 'utilisateur', 'vendeur'},
     'stores': {'magasin', 'code'},
+    'sellers': {'vendeurs'},
 }
 STAMP_REFS = {'DTT', 'TIMBRE'}      # « droit de timbre sur ticket »: not an article
 
@@ -221,7 +229,8 @@ class YrMigrationImport(models.TransientModel):
         if name.endswith(('.xlsx', '.xlsm')) or content[:2] == b'PK':
             import openpyxl
             workbook = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
-            rows = workbook.active.iter_rows(values_only=True)
+            sheet = self.env.context.get('yr_sheet')
+            rows = (workbook[sheet] if sheet else workbook.active).iter_rows(values_only=True)
         else:
             decoded = ''
             for encoding in ('utf-8-sig', 'cp1252', 'latin-1'):
@@ -244,6 +253,34 @@ class YrMigrationImport(models.TransientModel):
         if header is None:
             raise UserError(_('Le fichier est vide.'))
 
+    def _sheet_names(self):
+        """Sheets of an Excel workbook (empty for a CSV file)."""
+        content = base64.b64decode(self.file or b'')
+        if not ((self.filename or '').lower().endswith(('.xlsx', '.xlsm')) or content[:2] == b'PK'):
+            return []
+        import openpyxl
+        return openpyxl.load_workbook(io.BytesIO(content), read_only=True).sheetnames
+
+    def _detect_kind(self):
+        """File type of the current sheet (context ``yr_sheet``) from its header."""
+        try:
+            header = set(next(self._rows()))
+        except Exception:  # noqa: BLE001 - unreadable / empty sheet
+            return False
+        if 'nummagasin' in header and 'magasin' in header:
+            return 'stores'                              # magasin | code fastmag (YR_CARR) | numéro (2)
+        return next((kind for kind, keys in SIGNATURE.items() if keys <= header), False) or \
+            ('stores' if self._is_store_list() else False)
+
+    def _sheet_kinds(self):
+        """[(sheet, file type)] of the recognised sheets of a workbook, in import order."""
+        kinds = []
+        for sheet in self._sheet_names():
+            kind = self.with_context(yr_sheet=sheet)._detect_kind()
+            if kind:
+                kinds.append((sheet, kind))
+        return sorted(kinds, key=lambda sk: SHEET_ORDER.index(sk[1]))
+
     @api.depends('file', 'filename')
     def _compute_file_type(self):
         for wizard in self:
@@ -251,11 +288,15 @@ class YrMigrationImport(models.TransientModel):
             if not wizard.file:
                 continue
             try:
-                header = set(next(wizard._rows()))
+                sheets = wizard._sheet_kinds()
             except Exception:  # noqa: BLE001 - unreadable file: reported when importing
-                continue
-            wizard.file_type = next((kind for kind, keys in SIGNATURE.items() if keys <= header), False) or \
-                ('stores' if wizard._is_store_list() else False)
+                sheets = []
+            if len(sheets) > 1:
+                wizard.file_type = 'workbook'
+            elif sheets:
+                wizard.file_type = sheets[0][1]
+            else:
+                wizard.file_type = wizard._detect_kind()
 
     def _is_store_list(self):
         """A list without header row: store name, numeric code (« CARREFOUR | 2 »)."""
@@ -287,16 +328,24 @@ class YrMigrationImport(models.TransientModel):
         self.ensure_one()
         if not self.file_type:
             raise UserError(_('Type de fichier non reconnu : choisissez-le dans la liste.'))
-        stats = defaultdict(int)
-        errors = []
         env = self.with_context(tracking_disable=True, mail_create_nolog=True, mail_notrack=True,
                                 yr_migration_force=True)
-        getattr(env, '_import_%s' % self.file_type)(stats, errors)
-        self.write({'state': 'done', 'result': self._render(stats, errors)})
+        if self.file_type == 'workbook':
+            parts = [(sheet, kind) for sheet, kind in self._sheet_kinds()]
+        else:
+            sheets = [sheet for sheet, kind in self._sheet_kinds() if kind == self.file_type]
+            parts = [(sheets[0] if sheets else None, self.file_type)]
+        result = ''
+        for sheet, kind in parts:
+            stats = defaultdict(int)
+            errors = []
+            getattr(env.with_context(yr_sheet=sheet), '_import_%s' % kind)(stats, errors)
+            result += self._render(stats, errors, kind, sheet if self.file_type == 'workbook' else None)
+        self.write({'state': 'done', 'result': result})
         return {'type': 'ir.actions.act_window', 'res_model': self._name, 'res_id': self.id, 'view_mode': 'form',
                 'target': 'new'}
 
-    def _render(self, stats, errors):
+    def _render(self, stats, errors, kind=None, sheet=None):
         labels = {
             'rows': _('Lignes lues'), 'created': _('Créés'), 'updated': _('Mis à jour'), 'skipped': _('Ignorés'),
             'categories': _('Catégories PdV créées'), 'suppliers': _('Fournisseurs créés'),
@@ -304,8 +353,12 @@ class YrMigrationImport(models.TransientModel):
             'unknown_stores': _('Lignes avec magasin inconnu'), 'customers': _('Clients avec historique'),
             'tickets': _('Tickets'), 'purchases': _('Achats clients (historique CRM)'),
             'employees': _('Vendeurs créés (Employés)'), 'unknown_products': _('Lignes sans article connu'),
+            'sellers_updated': _('Vendeurs mis à jour'),
         }
-        html = '<p><b>%s</b></p><ul>' % html_escape(dict(FILE_TYPES)[self.file_type])
+        title = dict(FILE_TYPES)[kind or self.file_type]
+        if sheet:
+            title = '%s — %s' % (sheet, title)
+        html = '<p><b>%s</b></p><ul>' % html_escape(title)
         for key, label in labels.items():
             if stats.get(key):
                 html += '<li>%s : <b>%s</b></li>' % (html_escape(label), stats[key])
@@ -646,7 +699,12 @@ class YrMigrationImport(models.TransientModel):
         rows = self._rows(raw=True)
         first = next(rows)
         header = [norm(c) for c in first]
-        if {'magasin', 'code'} <= set(header):
+        fastmag_idx = None
+        if {'magasin', 'nummagasin'} <= set(header):
+            # magasin | code fastmag (YR_CARR) | numéro (2): the number is the store code
+            name_idx, code_idx = header.index('magasin'), header.index('nummagasin')
+            fastmag_idx = next((header.index(h) for h in ('codemagasin', 'codemag') if h in header), None)
+        elif {'magasin', 'code'} <= set(header):
             name_idx, code_idx = header.index('magasin'), header.index('code')
         else:       # no header row: name, code
             name_idx, code_idx = 0, 1
@@ -654,8 +712,9 @@ class YrMigrationImport(models.TransientModel):
         Store = self.env['loyalty.store'].with_context(active_test=False)
         stores = Store.search([])
         for line_no, row in enumerate(rows, start=2):
-            row = list(row) + [None, None]
+            row = list(row) + [None, None, None]
             name, code = text(row[name_idx]), text(row[code_idx])
+            fastmag = text(row[fastmag_idx]).upper() if fastmag_idx is not None else ''
             if not name or not code:
                 if name or code:
                     errors.append((line_no, name or code, _('nom du magasin ou code manquant')))
@@ -669,10 +728,15 @@ class YrMigrationImport(models.TransientModel):
                 continue
             if store:
                 vals = {}
+                aliases = [a.strip() for a in (store.yr_fastmag_code or '').split(',') if a.strip()]
                 if store.code != code:
                     # the former code stays known for the files that still use it
                     vals['code'] = code
-                    vals['yr_fastmag_code'] = ','.join(filter(None, [store.yr_fastmag_code, store.code]))
+                    aliases.append(store.code)
+                if fastmag and fastmag not in [a.upper() for a in aliases]:
+                    aliases.append(fastmag)                     # « YR_CARR » of the sales files
+                if ','.join(aliases) != (store.yr_fastmag_code or ''):
+                    vals['yr_fastmag_code'] = ','.join(aliases)
                 if not store.active:
                     vals['active'] = True
                 if vals:
@@ -682,8 +746,56 @@ class YrMigrationImport(models.TransientModel):
                     stats['skipped'] += 1
                 continue
             web = any(word in norm(name) for word in ('eshop', 'siteweb', 'website', 'ecommerce'))
-            stores |= Store.create({'name': name, 'code': code, 'store_type': 'website' if web else 'store'})
+            stores |= Store.create({'name': name, 'code': code, 'store_type': 'website' if web else 'store',
+                                    'yr_fastmag_code': fastmag or False})
             stats['created'] += 1
+
+    # ── sellers: code magasin (first row of each store), vendeur, code logistique ──
+    def _import_sellers(self, stats, errors):
+        """Each seller becomes an employee of the company of its store, proposed at the store's tills."""
+        stores = self._stores()
+        index = self.env['yr.legacy.sale.line']._employee_index()
+        Employee = self.env['hr.employee'].sudo().with_context(active_test=False)
+        shop = ''
+        for item in self._records('sellers'):
+            shop = text(item.get('shop')).upper() or shop          # store code only on the first row
+            name = text(item.get('seller'))
+            if not name:
+                continue
+            stats['rows'] += 1
+            store = stores.get(shop) if shop else None
+            if shop and not store:
+                stats['stores_missing'] = stats.get('stores_missing') or set()
+                stats['stores_missing'].add(shop)
+            code = text(item.get('logistic_code'))
+            employee = Employee.search([('yr_logistic_code', '=', code)], limit=1) if code else Employee
+            if not employee:
+                same_name = index.get(' '.join(name.upper().split()))
+                # same first name, other seller (other logistic code): a different person
+                if same_name and (not code or not same_name.yr_logistic_code):
+                    employee = same_name
+            if employee:
+                vals = {}
+                if code and employee.yr_logistic_code != code:
+                    vals['yr_logistic_code'] = code
+                if store and employee.yr_store_id != store:
+                    vals['yr_store_id'] = store.id
+                if vals:
+                    employee.write(vals)
+                    stats['sellers_updated'] += 1
+                else:
+                    stats['skipped'] += 1
+            else:
+                employee = Employee.create({
+                    'name': name, 'yr_logistic_code': code or False, 'yr_store_id': store.id if store else False,
+                    'company_id': (store.company_id if store else self.env.company).id})
+                index[' '.join(name.upper().split())] = employee
+                stats['employees'] += 1
+            if store:
+                # proposed in the store's tills (« Vendeur avant paiement »)
+                store.sudo().pos_config_ids.filtered(lambda c: employee not in c.yr_seller_employee_ids).write(
+                    {'yr_seller_employee_ids': [(4, employee.id)]})
+        self.env['yr.legacy.sale.line'].sudo()._link_employees()
 
     # ── sales detail: one line per ticket line, cashier and seller ───────
     def _import_sales_detail(self, stats, errors):
@@ -738,7 +850,8 @@ class YrMigrationImport(models.TransientModel):
             if not store:
                 stats['stores_missing'] = stats.get('stores_missing') or set()
                 stats['stores_missing'].add(item['shop'])
-            card = text(item.get('card'))
+            # no « carte fidélité » column: the client code (Y88074) is the card / customer code
+            card = text(item.get('card')) if 'card' in item else text(item.get('fm_id'))
             card = '' if card in ('0', '') else card
             ref, ean = text(item.get('ref')), text(item.get('ean'))
             product = False if item['stamp'] else products.get(('ref', ref)) or products.get(('ean', ean))

@@ -9,7 +9,7 @@
                 <div invisible="state != 'draft'">
                     <p class="text-muted">
                         Choisissez un fichier fastmag : il est reconnu tout seul. Ordre conseillé :
-                        <b>magasins</b>, <b>articles</b>, <b>clients</b> (2017-2026 puis ancien système), puis
+                        <b>magasins</b> (et vendeurs), <b>articles</b>, <b>clients</b> (2017-2026 puis ancien système), puis
                         <b>CA clients</b> et <b>détail des ventes</b>.
                         Un fichier peut être réimporté : rien n'est créé en double.
                     </p>
@@ -30,8 +30,15 @@
                         <field name="create_sellers"/>
                         <field name="update_purchases"/>
                     </group>
+                    <div invisible="file_type not in ('sellers', 'workbook')" class="text-muted mb-2">
+                        Vendeurs : chaque vendeur devient un employé du magasin (code logistique gardé) et est proposé
+                        dans les caisses de ce magasin (« Vendeur avant paiement »).
+                        <span invisible="file_type != 'workbook'">Toutes les feuilles reconnues sont importées,
+                        les magasins d'abord.</span>
+                    </div>
                     <div invisible="file_type != 'stores'" class="text-muted mb-2">
-                        Une ligne par magasin : nom et code (ex. AZUR | 23). Les magasins absents sont créés,
+                        Une ligne par magasin : nom et code (ex. AZUR | 23), ou nom, code fastmag et numéro
+                        (ex. CARREFOUR | YR_CARR | 2). Les magasins absents sont créés,
                         les autres reçoivent le code (l'ancien code reste reconnu). « eshop » devient le site web.
                     </div>
                     <group invisible="file_type not in ('client_new', 'client_old')" string="Clients">

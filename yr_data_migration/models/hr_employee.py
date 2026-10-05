@@ -9,3 +9,6 @@ class HrEmployee(models.Model):
         'Nom(s) fastmag', index=True,
         help='Nom du vendeur ou de l\'utilisateur dans les fichiers fastmag (ex. JBELI RYM, RIM), si différent. '
              'Plusieurs : séparés par une virgule. Sert à rattacher les ventes importées.')
+    yr_logistic_code = fields.Char('Code logistique', index=True, help='Code du vendeur dans fastmag (ex. 703).')
+    yr_store_id = fields.Many2one('loyalty.store', 'Magasin', index=True,
+                                  help='Magasin du vendeur : il est proposé dans les caisses de ce magasin.')

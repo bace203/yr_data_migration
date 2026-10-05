@@ -7,6 +7,8 @@
         <field name="arch" type="xml">
             <field name="coach_id" position="after">
                 <field name="yr_fastmag_name" placeholder="ex. JBELI RYM"/>
+                <field name="yr_store_id"/>
+                <field name="yr_logistic_code"/>
             </field>
         </field>
     </record>

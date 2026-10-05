@@ -39,6 +39,23 @@ def xlsx(rows):
     return base64.b64encode(out.getvalue())
 
 
+def xlsx_sheets(sheets):
+    """{sheet name: rows} → one workbook with several sheets."""
+    out = io.BytesIO()
+    workbook = xlsxwriter.Workbook(out, {'in_memory': True})
+    date_format = workbook.add_format({'num_format': 'dd/mm/yyyy'})
+    for name, rows in sheets.items():
+        sheet = workbook.add_worksheet(name)
+        for r, row in enumerate(rows):
+            for c, value in enumerate(row):
+                if isinstance(value, datetime):
+                    sheet.write_datetime(r, c, value, date_format)
+                elif value is not None:
+                    sheet.write(r, c, value)
+    workbook.close()
+    return base64.b64encode(out.getvalue())
+
+
 def article(code, ean, name, axe, sub_axe, price, status='Actif ', supplier=('YVES', 'Y.ROCHER')):
     row = [None] * len(ARTICLE_HEADER)
     row[0], row[1], row[2], row[4], row[5], row[6], row[7], row[8] = \
@@ -273,6 +290,66 @@ class TestMigrationImport(TransactionCase):
         stores = self.env['yr.migration.import']._stores()
         self.assertEqual(stores.get('YR_ZEPHYRQ'), zephyr)
         self.assertIn('YR_ZEPHYRQ', zephyr.yr_fastmag_code)
+
+    def test_workbook_stores_and_sellers(self):
+        """The « vendeurs / magasins » workbook: Feuil1 sellers per store, Feuil2 magasin | YR_ code | number."""
+        Store = self.env['loyalty.store']
+        carr = Store.create({'name': 'CARREFOURQ', 'code': '992'})
+        config = self.env['pos.config'].create({'name': 'Caisse Carrefourq', 'crm_store_id': carr.id})
+        sellers = [['Code magasin ', 'Vendeurs', 'Code Logistique'],
+                   ['YR_CARRQ', 'RIMQ', 801], [None, 'SANAQ TEST', 802],
+                   ['YR_MALLSOUQ', 'IMENQ', 803], [None, 'SANAQ TEST', 804]]
+        stores = [['Magasin ', 'Code -Magasin ', 'Num-Magasin '],
+                  ['CARREFOURQ', 'YR_CARRQ', 992], ['MALL OF SOUSSEQ', 'YR_MALLSOUQ', 994]]
+        wizard = self.env['yr.migration.import'].create({
+            'file': xlsx_sheets({'Feuil1': sellers, 'Feuil2': stores}), 'filename': 'vendeurmagasin.xlsx'})
+        self.assertEqual(wizard.file_type, 'workbook')
+        wizard.action_import()
+        self.assertIn('Feuil2', wizard.result)
+        # stores: the YR_ code of the sales files is kept on the store, the number is its code
+        self.assertIn('YR_CARRQ', carr.yr_fastmag_code)
+        mall = Store.search([('code', '=', '994')])
+        self.assertEqual((mall.name, mall.yr_fastmag_code), ('MALL OF SOUSSEQ', 'YR_MALLSOUQ'))
+        self.assertEqual(self.env['yr.migration.import']._stores().get('YR_MALLSOUQ'), mall)
+        # sellers: employees of their store, with the logistic code, proposed at the store's till
+        Employee = self.env['hr.employee']
+        rim = Employee.search([('yr_logistic_code', '=', '801')])
+        self.assertEqual((rim.name, rim.yr_store_id), ('RIMQ', carr))
+        self.assertIn(rim, config.yr_seller_employee_ids)
+        self.assertEqual(Employee.search([('yr_logistic_code', '=', '803')]).yr_store_id, mall)  # code carried down
+        # same name, other logistic code: two different sellers
+        self.assertEqual(len(Employee.search([('name', '=', 'SANAQ TEST')])), 2)
+        # again: nothing duplicated
+        wizard = self.env['yr.migration.import'].create({
+            'file': xlsx_sheets({'Feuil1': sellers, 'Feuil2': stores}), 'filename': 'vendeurmagasin.xlsx'})
+        wizard.action_import()
+        self.assertEqual(Employee.search_count([('yr_logistic_code', 'in', ['801', '802', '803', '804'])]), 4)
+        self.assertEqual(Store.search_count([('code', '=', '994')]), 1)
+
+    def test_sales_detail_client_column(self):
+        """Sales file « INES-YVESROCHER | CodeMag | … | Client | vente | … | PrixNet | total_1 | valeurArticle »:
+        no card column, the client code is the card."""
+        partner = self.env['res.partner'].create({'name': 'Cliente Y', 'customer_code': 'Y88074Q'})
+        header = ['INES-YVESROCHER', 'CodeMag', 'Utilisateur', 'Vendeur', 'Date', 'Client', 'vente', 'Barcode',
+                  'Quantite', 'Prix', 'remise', 'PrixNet', 'total', 'total_1', 'valeurArticle', 'motif']
+        rows = [header,
+                ['INES-YVESROCHER', 'YR_YOUG', 'RIM_T', 'SANAQ', '27/11/2017', 'Y88074Q', 2, 100102550, 1, 34, 0, 34,
+                 34, 67, 16.73, None],
+                ['INES-YVESROCHER', 'YR_YOUG', 'RIM_T', 'SANAQ', '27/11/2017', 'Y88074Q', 2, 100190813, 1, 33, 0, 33,
+                 33, 67, 16.239, None],
+                ['INES-YVESROCHER', 'YR_YOUG', 'RIM_T', 'RIMQ', '27/11/2017', None, 1, 100191290, 1, 13, 0, 13, 13, 13,
+                 6.397, None],
+                ['INES-YVESROCHER', 'YR_YOUG', 'RIM_T', 'MARWAQ', '27/11/2017', 'Y88074Q', 25, 100195183, 1, 8, 100, 0,
+                 0, 132, 3.937, 'CADEAU_PTS']]
+        wizard = self._import(rows)
+        self.assertEqual(wizard.file_type, 'sales_detail')
+        lines = self.env['yr.legacy.sale.line'].search([('shop_code', '=', 'YR_YOUG'), ('date', '=', date(2017, 11, 27))])
+        self.assertEqual(len(lines), 4)
+        self.assertEqual(lines.mapped('store_id'), self.store)
+        self.assertEqual(lines.filtered(lambda l: l.ticket == '2').partner_id, partner)
+        self.assertFalse(lines.filtered(lambda l: l.ticket == '1').partner_id)
+        self.assertEqual(lines.filtered(lambda l: l.ticket == '25').reason, 'CADEAU_PTS')
+        self.assertEqual(set(lines.mapped('seller_name')), {'SANAQ', 'RIMQ', 'MARWAQ'})
 
     # ── sales detail ─────────────────────────────────────────────────────
     def _detail(self, ticket, day, cashier, seller, card, ref, ean, name, qty, price, discount, total, reason=None):
