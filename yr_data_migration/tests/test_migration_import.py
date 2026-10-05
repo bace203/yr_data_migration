@@ -317,6 +317,16 @@ class TestMigrationImport(TransactionCase):
         self.assertEqual((rim.name, rim.yr_store_id), ('RIMQ', carr))
         self.assertIn(rim, config.yr_seller_employee_ids)
         self.assertEqual(Employee.search([('yr_logistic_code', '=', '803')]).yr_store_id, mall)  # code carried down
+        # store codes with a typing error or abbreviated, and an unknown store (created)
+        mahs = Store.create({'name': 'KAIROUANQZ', 'code': '995'})
+        sfax = Store.create({'name': 'BIZERTEQ NORD', 'code': '996'})
+        more = [['Code magasin ', 'Vendeurs', 'Code Logistique'],
+                ['YR_KAYROUANQZ', 'HAMIDAQ', 811], ['YR_BNORD', 'OLFAQ', 812], ['YR_HBQ', 'NESRINEQ', 813]]
+        self._import(more)
+        self.assertEqual(Employee.search([('yr_logistic_code', '=', '811')]).yr_store_id, mahs)
+        self.assertEqual(Employee.search([('yr_logistic_code', '=', '812')]).yr_store_id, sfax)
+        hb = Employee.search([('yr_logistic_code', '=', '813')]).yr_store_id
+        self.assertEqual((hb.name, hb.yr_fastmag_code), ('HBQ', 'YR_HBQ'))
         # same name, other logistic code: two different sellers
         self.assertEqual(len(Employee.search([('name', '=', 'SANAQ TEST')])), 2)
         # again: nothing duplicated

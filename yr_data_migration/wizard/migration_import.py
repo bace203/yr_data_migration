@@ -5,6 +5,7 @@ One screen: the kind of file is recognised from its header row. Re-importing a f
 created (matched on article code / barcode and customer card number) instead of duplicating them.
 """
 import base64
+import difflib
 import csv
 import io
 import re
@@ -102,12 +103,30 @@ class StoreIndex(dict):
             found = self.records.filtered(lambda s: norm(s.code) == key) or \
                 self.records.filtered(lambda s: norm(s.name) == key) or \
                 self.records.filtered(lambda s: norm(s.name).startswith(key))
+            if len(found) != 1:
+                found = self._closest(key)
         if len(found) != 1:
             self[code] = None
             return None
         found.sudo().yr_fastmag_code = ','.join(filter(None, [found.yr_fastmag_code, code]))
         self[code] = found
         return found
+
+    def _closest(self, key):
+        """Typing errors and abbreviations: MAYHSOUNA → MAHSOUNA, SCENTER → SFAX CENTRE (S + CENTRE).
+        Only a clear winner is kept."""
+        scored = []
+        for store in self.records.filtered(lambda s: s.store_type != 'website' or 'shop' in key or 'web' in key):
+            words = [norm(w) for w in re.split(r'[\s_\-/]+', store.name or '') if norm(w)]
+            forms = {norm(store.name)}
+            for i in range(1, len(words)):          # first words abbreviated: « S CENTRE », « SF CENTRE »
+                for size in (1, 2, 3):
+                    forms.add(''.join(w[:size] for w in words[:i]) + ''.join(words[i:]))
+            scored.append((max(difflib.SequenceMatcher(None, key, form).ratio() for form in forms), store))
+        scored.sort(key=lambda sc: -sc[0])
+        if scored and scored[0][0] >= 0.8 and (len(scored) == 1 or scored[0][0] - scored[1][0] >= 0.08):
+            return scored[0][1]
+        return self.records.browse()
 
     def get(self, code, default=None):
         return self._resolve(code) or default
@@ -363,6 +382,10 @@ class YrMigrationImport(models.TransientModel):
             if stats.get(key):
                 html += '<li>%s : <b>%s</b></li>' % (html_escape(label), stats[key])
         html += '</ul>'
+        if stats.get('stores_created'):
+            html += '<p class="text-info">%s %s</p>' % (
+                html_escape(_('Magasins créés (inconnus jusqu\'ici, à compléter dans Fidélité & CRM › Configuration › '
+                              'Magasins) :')), html_escape(', '.join(sorted(stats['stores_created']))))
         if stats.get('stores_missing'):
             html += '<p class="text-warning">%s %s</p>' % (
                 html_escape(_('Codes magasin à renseigner dans Fidélité & CRM › Configuration › Magasins '
@@ -765,8 +788,14 @@ class YrMigrationImport(models.TransientModel):
             stats['rows'] += 1
             store = stores.get(shop) if shop else None
             if shop and not store:
-                stats['stores_missing'] = stats.get('stores_missing') or set()
-                stats['stores_missing'].add(shop)
+                # a store of the sellers file unknown in Posify: created (to rename / complete if needed)
+                name = re.sub(r'^YR[_\s-]*', '', shop, flags=re.I) or shop
+                store = self.env['loyalty.store'].sudo().create({
+                    'name': name, 'code': shop, 'yr_fastmag_code': shop})
+                stores.records |= store
+                dict.__setitem__(stores, shop, store)
+                stats['stores_created'] = stats.get('stores_created') or set()
+                stats['stores_created'].add(name)
             code = text(item.get('logistic_code'))
             employee = Employee.search([('yr_logistic_code', '=', code)], limit=1) if code else Employee
             if not employee:
