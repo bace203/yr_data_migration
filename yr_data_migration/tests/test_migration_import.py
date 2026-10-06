@@ -327,6 +327,18 @@ class TestMigrationImport(TransactionCase):
         self.assertEqual(Employee.search([('yr_logistic_code', '=', '812')]).yr_store_id, sfax)
         hb = Employee.search([('yr_logistic_code', '=', '813')]).yr_store_id
         self.assertEqual((hb.name, hb.yr_fastmag_code), ('HBQ', 'YR_HBQ'))
+        # closed stores (statut « fermé »): kept archived, their sellers attached; a store already known under its
+        # own YR_ code (Monastir Centre = YR_MONZ_C) is not taken for another abbreviation (MCENTER = Mahdia Centre)
+        sfax_c = Store.create({'name': 'MonastirZ Centre', 'code': '997', 'yr_fastmag_code': 'YR_MONZ_C'})
+        self._import([['magasin', 'code', 'statut'], ['Habib Bourguiba Zitouna', 998, 'fermé'],
+                      ['MahdiaZ Centre', 999, 'Fermé']])
+        closed = Store.with_context(active_test=False).search([('code', 'in', ['998', '999'])])
+        self.assertEqual(closed.mapped('active'), [False, False])
+        self._import([['Code magasin ', 'Vendeurs', 'Code Logistique'],
+                      ['YR_HBZ', 'NADIAZ', 821], ['YR_MCENTER', 'INSAFZ', 822]])
+        self.assertEqual(Employee.search([('yr_logistic_code', '=', '821')]).yr_store_id.code, '998')
+        self.assertEqual(Employee.search([('yr_logistic_code', '=', '822')]).yr_store_id.code, '999')
+        self.assertNotIn('YR_MCENTER', sfax_c.yr_fastmag_code)
         # same name, other logistic code: two different sellers
         self.assertEqual(len(Employee.search([('name', '=', 'SANAQ TEST')])), 2)
         # again: nothing duplicated

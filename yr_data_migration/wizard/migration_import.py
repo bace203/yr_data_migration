@@ -104,7 +104,7 @@ class StoreIndex(dict):
                 self.records.filtered(lambda s: norm(s.name) == key) or \
                 self.records.filtered(lambda s: norm(s.name).startswith(key))
             if len(found) != 1:
-                found = self._closest(key)
+                found = self._closest(key.replace('center', 'centre'))      # SCENTER: English spelling
         if len(found) != 1:
             self[code] = None
             return None
@@ -113,12 +113,19 @@ class StoreIndex(dict):
         return found
 
     def _closest(self, key):
-        """Typing errors and abbreviations: MAYHSOUNA → MAHSOUNA, SCENTER → SFAX CENTRE (S + CENTRE).
-        Only a clear winner is kept."""
+        """Typing errors and abbreviations: MAYHSOUNA → MAHSOUNA, HB → Habib Bourguiba, SCENTER → Sousse Centre.
+        A store already known under another YR_ code (Sfax Centre = YR_SFAX_C) is not a candidate, and only a
+        clear winner is kept."""
         scored = []
         for store in self.records.filtered(lambda s: s.store_type != 'website' or 'shop' in key or 'web' in key):
+            own = [norm(re.sub(r'^YR[_\s-]*', '', alias.strip(), flags=re.I))
+                   for alias in (store.yr_fastmag_code or '').split(',') if alias.strip().upper().startswith('YR')]
+            if own:
+                # already known under its own fastmag code: only a typing error of that code (MAYHSOUNA)
+                scored.append((max(difflib.SequenceMatcher(None, key, form).ratio() for form in own), store))
+                continue
             words = [norm(w) for w in re.split(r'[\s_\-/]+', store.name or '') if norm(w)]
-            forms = {norm(store.name)}
+            forms = {norm(store.name), ''.join(w[:1] for w in words)}        # full name, initials (HB)
             for i in range(1, len(words)):          # first words abbreviated: « S CENTRE », « SF CENTRE »
                 for size in (1, 2, 3):
                     forms.add(''.join(w[:size] for w in words[:i]) + ''.join(words[i:]))
@@ -372,7 +379,7 @@ class YrMigrationImport(models.TransientModel):
             'unknown_stores': _('Lignes avec magasin inconnu'), 'customers': _('Clients avec historique'),
             'tickets': _('Tickets'), 'purchases': _('Achats clients (historique CRM)'),
             'employees': _('Vendeurs créés (Employés)'), 'unknown_products': _('Lignes sans article connu'),
-            'sellers_updated': _('Vendeurs mis à jour'),
+            'sellers_updated': _('Vendeurs mis à jour'), 'closed': _('Magasins fermés (archivés)'),
         }
         title = dict(FILE_TYPES)[kind or self.file_type]
         if sheet:
@@ -525,7 +532,8 @@ class YrMigrationImport(models.TransientModel):
 
     # ── customers ────────────────────────────────────────────────────────
     def _stores(self):
-        return StoreIndex(self.env['loyalty.store'].search([]))
+        # closed (archived) stores too: their old sales and sellers are still imported
+        return StoreIndex(self.env['loyalty.store'].with_context(active_test=False).search([]))
 
     def _existing_customers(self, cards):
         Partner = self.env['res.partner'].with_context(active_test=False)
@@ -723,21 +731,33 @@ class YrMigrationImport(models.TransientModel):
         first = next(rows)
         header = [norm(c) for c in first]
         fastmag_idx = None
+        # optional « statut » / « fermé » / « actif » column: a closed store is kept, archived
+        status_idx = next((header.index(h) for h in ('statut', 'etat', 'ferme', 'actif', 'status') if h in header),
+                          None)
         if {'magasin', 'nummagasin'} <= set(header):
             # magasin | code fastmag (YR_CARR) | numéro (2): the number is the store code
             name_idx, code_idx = header.index('magasin'), header.index('nummagasin')
             fastmag_idx = next((header.index(h) for h in ('codemagasin', 'codemag') if h in header), None)
         elif {'magasin', 'code'} <= set(header):
             name_idx, code_idx = header.index('magasin'), header.index('code')
-        else:       # no header row: name, code
-            name_idx, code_idx = 0, 1
+        else:       # no header row: name, code (, « fermé »)
+            name_idx, code_idx, status_idx = 0, 1, 2
             rows = iter([first] + list(rows))
+        status_col = header[status_idx] if status_idx is not None and status_idx < len(header) else ''
+
+        def closed(value):
+            value = norm(value)
+            if status_col == 'actif':
+                return value in ('non', 'n', '0', 'false', 'faux')
+            return value.startswith(('ferm', 'clos', 'inactif', 'archiv')) or value in ('oui', 'o', '1', 'x') and \
+                status_col == 'ferme'
         Store = self.env['loyalty.store'].with_context(active_test=False)
         stores = Store.search([])
         for line_no, row in enumerate(rows, start=2):
             row = list(row) + [None, None, None]
             name, code = text(row[name_idx]), text(row[code_idx])
             fastmag = text(row[fastmag_idx]).upper() if fastmag_idx is not None else ''
+            is_closed = status_idx is not None and closed(row[status_idx])
             if not name or not code:
                 if name or code:
                     errors.append((line_no, name or code, _('nom du magasin ou code manquant')))
@@ -760,8 +780,8 @@ class YrMigrationImport(models.TransientModel):
                     aliases.append(fastmag)                     # « YR_CARR » of the sales files
                 if ','.join(aliases) != (store.yr_fastmag_code or ''):
                     vals['yr_fastmag_code'] = ','.join(aliases)
-                if not store.active:
-                    vals['active'] = True
+                if store.active == is_closed:
+                    vals['active'] = not is_closed
                 if vals:
                     store.write(vals)
                     stats['updated'] += 1
@@ -770,8 +790,10 @@ class YrMigrationImport(models.TransientModel):
                 continue
             web = any(word in norm(name) for word in ('eshop', 'siteweb', 'website', 'ecommerce'))
             stores |= Store.create({'name': name, 'code': code, 'store_type': 'website' if web else 'store',
-                                    'yr_fastmag_code': fastmag or False})
+                                    'yr_fastmag_code': fastmag or False, 'active': not is_closed})
             stats['created'] += 1
+            if is_closed:
+                stats['closed'] += 1
 
     # ── sellers: code magasin (first row of each store), vendeur, code logistique ──
     def _import_sellers(self, stats, errors):
@@ -789,13 +811,13 @@ class YrMigrationImport(models.TransientModel):
             store = stores.get(shop) if shop else None
             if shop and not store:
                 # a store of the sellers file unknown in Posify: created (to rename / complete if needed)
-                name = re.sub(r'^YR[_\s-]*', '', shop, flags=re.I) or shop
+                store_name = re.sub(r'^YR[_\s-]*', '', shop, flags=re.I) or shop
                 store = self.env['loyalty.store'].sudo().create({
-                    'name': name, 'code': shop, 'yr_fastmag_code': shop})
+                    'name': store_name, 'code': shop, 'yr_fastmag_code': shop})
                 stores.records |= store
                 dict.__setitem__(stores, shop, store)
                 stats['stores_created'] = stats.get('stores_created') or set()
-                stats['stores_created'].add(name)
+                stats['stores_created'].add(store_name)
             code = text(item.get('logistic_code'))
             employee = Employee.search([('yr_logistic_code', '=', code)], limit=1) if code else Employee
             if not employee:
