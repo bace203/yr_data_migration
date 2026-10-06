@@ -281,10 +281,19 @@ class TestMigrationImport(TransactionCase):
         zephyr = Store.search([('code', '=', '920')])
         self.assertEqual((zephyr.name, zephyr.store_type), ('ZEPHYRQ TEST', 'store'))
         self.assertEqual(Store.search([('code', '=', '926')]).store_type, 'website')
+        # one company per store: a branch of the main company; the website's branch is flagged « Site web »
+        root = self.env.company.root_id
+        imported = Store.search([('code', 'in', ['923', '920', '926'])])
+        self.assertEqual(len(imported.company_id), 3)
+        self.assertEqual(imported.company_id.parent_id, root)
+        self.assertEqual(zephyr.company_id.name, 'ZEPHYRQ TEST')
+        self.assertTrue(Store.search([('code', '=', '926')]).company_id.crm_is_website)
+        self.assertTrue(imported.company_id <= self.env.user.company_ids)
         # again, and without header row: nothing duplicated
         wizard = self._import([['ZEPHYRQ TEST', 920], ['NABEUL TEST', 919]])
         self.assertEqual(wizard.file_type, 'stores')
         self.assertEqual(Store.search_count([('name', '=', 'ZEPHYRQ TEST')]), 1)
+        self.assertEqual(self.env['res.company'].search_count([('name', '=', 'ZEPHYRQ TEST')]), 1)  # not twice
         self.assertTrue(Store.search([('code', '=', '919'), ('name', '=', 'NABEUL TEST')]))
         # « YR_ZEPHYR » of the fastmag files is recognised from the name, and remembered
         stores = self.env['yr.migration.import']._stores()

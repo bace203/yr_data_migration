@@ -36,6 +36,9 @@
                         <span invisible="file_type != 'workbook'">Toutes les feuilles reconnues sont importées,
                         les magasins d'abord.</span>
                     </div>
+                    <group invisible="file_type not in ('stores', 'workbook')" string="Magasins">
+                        <field name="store_companies"/>
+                    </group>
                     <div invisible="file_type != 'stores'" class="text-muted mb-2">
                         Une ligne par magasin : nom et code (ex. AZUR | 23), ou nom, code fastmag et numéro
                         (ex. CARREFOUR | YR_CARR | 2). Les magasins absents sont créés,

@@ -244,6 +244,11 @@ class YrMigrationImport(models.TransientModel):
         'Alimenter l\'historique d\'achats des clients', default=True,
         help='Total par carte, jour et magasin, comme le fichier « CA clients » (sans doublon avec lui) : '
              'statut client, CA, segments de Fidélité & CRM.')
+    # stores
+    store_companies = fields.Boolean(
+        'Une société (filiale) par magasin', default=True,
+        help='Chaque magasin devient une filiale de la société principale (ventes, stock, vendeurs, statistiques '
+             'par magasin). Le site web est une filiale « Site web ».')
     state = fields.Selection([('draft', 'draft'), ('done', 'done')], default='draft')
     result = fields.Html('Résultat', readonly=True)
 
@@ -380,6 +385,7 @@ class YrMigrationImport(models.TransientModel):
             'tickets': _('Tickets'), 'purchases': _('Achats clients (historique CRM)'),
             'employees': _('Vendeurs créés (Employés)'), 'unknown_products': _('Lignes sans article connu'),
             'sellers_updated': _('Vendeurs mis à jour'), 'closed': _('Magasins fermés (archivés)'),
+            'companies': _('Sociétés (filiales) créées'),
         }
         title = dict(FILE_TYPES)[kind or self.file_type]
         if sheet:
@@ -753,6 +759,7 @@ class YrMigrationImport(models.TransientModel):
                 status_col == 'ferme'
         Store = self.env['loyalty.store'].with_context(active_test=False)
         stores = Store.search([])
+        in_file = Store.browse()
         for line_no, row in enumerate(rows, start=2):
             row = list(row) + [None, None, None]
             name, code = text(row[name_idx]), text(row[code_idx])
@@ -770,6 +777,7 @@ class YrMigrationImport(models.TransientModel):
                                                 ', '.join(store.mapped('name')))))
                 continue
             if store:
+                in_file |= store
                 vals = {}
                 aliases = [a.strip() for a in (store.yr_fastmag_code or '').split(',') if a.strip()]
                 if store.code != code:
@@ -789,11 +797,42 @@ class YrMigrationImport(models.TransientModel):
                     stats['skipped'] += 1
                 continue
             web = any(word in norm(name) for word in ('eshop', 'siteweb', 'website', 'ecommerce'))
-            stores |= Store.create({'name': name, 'code': code, 'store_type': 'website' if web else 'store',
-                                    'yr_fastmag_code': fastmag or False, 'active': not is_closed})
+            store = Store.create({'name': name, 'code': code, 'store_type': 'website' if web else 'store',
+                                  'yr_fastmag_code': fastmag or False, 'active': not is_closed})
+            stores |= store
+            in_file |= store
             stats['created'] += 1
             if is_closed:
                 stats['closed'] += 1
+        if self.store_companies:
+            self._store_companies_for(in_file, stats)
+
+    def _store_companies_for(self, stores, stats):
+        """One company per store: a branch of the main company (found by name, else created). A store sharing its
+        company with other stores, or in the main company itself, moves to its own branch."""
+        Company = self.env['res.company'].sudo()
+        Store = self.env['loyalty.store'].sudo().with_context(active_test=False)
+        root = self.env.company.root_id or self.env.company
+        family = Company.search([('id', 'child_of', root.id)])
+        for store in stores.sudo():
+            alone = Store.search_count([('company_id', '=', store.company_id.id), ('id', '!=', store.id)]) == 0
+            if store.company_id != root and alone:
+                continue                                    # already its own company
+            company = family.filtered(lambda c: c != root and norm(c.name) == norm(store.name))[:1]
+            if not company:
+                name = store.name
+                if Company.search_count([('name', '=', name)]):
+                    name = '%s (%s)' % (store.name, store.code)  # company names are unique
+                company = Company.create({'name': name, 'parent_id': root.id,
+                                          'crm_is_website': store.store_type == 'website'})
+                family |= company
+                stats['companies'] += 1
+            elif store.store_type == 'website' and not company.crm_is_website:
+                company.crm_is_website = True
+            store.company_id = company
+            # the user who imports sees the new subsidiaries (others: Paramètres › Utilisateurs)
+            if company not in self.env.user.company_ids:
+                self.env.user.sudo().company_ids = [(4, company.id)]
 
     # ── sellers: code magasin (first row of each store), vendeur, code logistique ──
     def _import_sellers(self, stats, errors):
@@ -831,6 +870,8 @@ class YrMigrationImport(models.TransientModel):
                     vals['yr_logistic_code'] = code
                 if store and employee.yr_store_id != store:
                     vals['yr_store_id'] = store.id
+                if store and employee.company_id != store.company_id and not employee.user_id:
+                    vals['company_id'] = store.company_id.id        # the company of its store
                 if vals:
                     employee.write(vals)
                     stats['sellers_updated'] += 1
