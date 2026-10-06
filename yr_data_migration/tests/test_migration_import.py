@@ -300,6 +300,49 @@ class TestMigrationImport(TransactionCase):
         self.assertEqual(stores.get('YR_ZEPHYRQ'), zephyr)
         self.assertIn('YR_ZEPHYRQ', zephyr.yr_fastmag_code)
 
+    def test_store_pos_and_sales_by_till(self):
+        """Store list: a till (and a warehouse) in each store's subsidiary; the detailed sales go to that till;
+        the import is recorded in the history."""
+        wizard = self._import([['magasin', 'code', 'statut'], ['TILLSTOREV', 971, None], ['CLOSEDV', 972, 'fermé'],
+                               ['eshopv', 973, None]])
+        Store = self.env['loyalty.store'].with_context(active_test=False)
+        store = Store.search([('code', '=', '971')])
+        self.assertEqual(len(store.pos_config_ids), 1)
+        self.assertEqual(store.pos_config_ids.company_id, store.company_id)
+        self.assertFalse(Store.search([('code', '=', '972')]).pos_config_ids)      # closed: no till
+        self.assertFalse(Store.search([('code', '=', '973')]).pos_config_ids)      # website: no till
+        self.assertEqual((wizard.log_id.state, wizard.log_id.name), ('done', 'fichier.xlsx'))
+        store.yr_fastmag_code = 'YR_TILLV'
+        header = ['CodeMag', 'Utilisateur', 'Vendeur', 'Date', 'Client', 'vente', 'Barcode', 'Quantite', 'Prix',
+                  'remise', 'total']
+        self._import([header, ['YR_TILLV', 'RIM_T', 'SANAV', '27/11/2017', None, 1, 100191290, 1, 13, 0, 13]])
+        line = self.env['yr.legacy.sale.line'].search([('shop_code', '=', 'YR_TILLV')])
+        self.assertEqual(line.pos_config_id, store.pos_config_ids)
+
+    def test_resume_interrupted_import(self):
+        """An import stopped half-way: importing the same file again skips what was saved, and says so."""
+        header = ['CodeMag', 'Utilisateur', 'Vendeur', 'Date', 'Client', 'vente', 'Barcode', 'Quantite', 'Prix',
+                  'remise', 'total']
+        rows = [header] + [['YR_YOUG', 'RIM_T', 'SANAR', '27/11/2017', None, n, 100191290, 1, 13, 0, 13]
+                           for n in range(1, 6)]
+        content = xlsx(rows)
+        Line = self.env['yr.legacy.sale.line']
+        # the first 2 tickets were saved, then the import stopped
+        Line.create([{'shop_code': 'YR_YOUG', 'ticket': str(n), 'sequence': 1, 'date': date(2017, 11, 27)}
+                     for n in (1, 2)])
+        wizard = self.env['yr.migration.import'].create({'file': content, 'filename': 'ventes.xlsx'})
+        self.env['yr.migration.log'].create({'name': 'ventes.xlsx', 'file_hash': wizard._file_hash(),
+                                             'state': 'failed', 'done': 2, 'total': 5})
+        self.assertIn('interrompu', wizard.previous_import)
+        wizard.action_import()
+        self.assertIn('déjà importées', wizard.result)
+        self.assertEqual(Line.search_count([('shop_code', '=', 'YR_YOUG'), ('date', '=', date(2017, 11, 27))]), 5)
+        self.assertEqual(wizard.log_id.state, 'done')
+        self.assertEqual(wizard.get_progress()['state'], 'done')
+        # once done: the screen says the file was imported
+        again = self.env['yr.migration.import'].create({'file': content, 'filename': 'ventes.xlsx'})
+        self.assertIn('déjà été importé', again.previous_import)
+
     def test_store_list_again_with_main_company_selected(self):
         """Stores already in their subsidiary, the session on the main company only (a normal user): re-importing a
         store list finds them (no « code unique » error, nothing duplicated)."""
@@ -350,12 +393,12 @@ class TestMigrationImport(TransactionCase):
         mahs = Store.create({'name': 'KAIROUANQZ', 'code': '995'})
         sfax = Store.create({'name': 'BIZERTEQ NORD', 'code': '996'})
         more = [['Code magasin ', 'Vendeurs', 'Code Logistique'],
-                ['YR_KAYROUANQZ', 'HAMIDAQ', 811], ['YR_BNORD', 'OLFAQ', 812], ['YR_HBQ', 'NESRINEQ', 813]]
+                ['YR_KAYROUANQZ', 'HAMIDAQ', 811], ['YR_BNORD', 'OLFAQ', 812], ['YR_QXZW', 'NESRINEQ', 813]]
         self._import(more)
         self.assertEqual(Employee.search([('yr_logistic_code', '=', '811')]).yr_store_id, mahs)
         self.assertEqual(Employee.search([('yr_logistic_code', '=', '812')]).yr_store_id, sfax)
         hb = Employee.search([('yr_logistic_code', '=', '813')]).yr_store_id
-        self.assertEqual((hb.name, hb.yr_fastmag_code), ('HBQ', 'YR_HBQ'))
+        self.assertEqual((hb.name, hb.yr_fastmag_code), ('QXZW', 'YR_QXZW'))
         # closed stores (statut « fermé »): kept archived, their sellers attached; a store already known under its
         # own YR_ code (Monastir Centre = YR_MONZ_C) is not taken for another abbreviation (MCENTER = Mahdia Centre)
         sfax_c = Store.create({'name': 'MonastirZ Centre', 'code': '997', 'yr_fastmag_code': 'YR_MONZ_C'})

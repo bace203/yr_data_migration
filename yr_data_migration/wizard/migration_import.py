@@ -6,6 +6,8 @@ created (matched on article code / barcode and customer card number) instead of 
 """
 import base64
 import difflib
+import hashlib
+import time
 import csv
 import io
 import re
@@ -14,6 +16,7 @@ from collections import defaultdict
 from datetime import date, datetime
 
 from odoo import _, api, fields, models
+from odoo.modules import module as odoo_module
 from odoo.exceptions import UserError
 from odoo.tools import html_escape
 
@@ -249,19 +252,90 @@ class YrMigrationImport(models.TransientModel):
         'Une société (filiale) par magasin', default=True,
         help='Chaque magasin devient une filiale de la société principale (ventes, stock, vendeurs, statistiques '
              'par magasin). Le site web est une filiale « Site web ».')
+    store_pos = fields.Boolean(
+        'Un point de vente (caisse) par magasin', default=True,
+        help='Chaque magasin physique ouvert reçoit sa caisse (et un entrepôt dans sa filiale) : les ventes '
+             'importées y sont rattachées.')
     state = fields.Selection([('draft', 'draft'), ('done', 'done')], default='draft')
+    log_id = fields.Many2one('yr.migration.log', 'Import', readonly=True)
+    previous_import = fields.Html('Déjà importé', compute='_compute_previous_import')
     result = fields.Html('Résultat', readonly=True)
+
+    # ── history, progress, resume ────────────────────────────────────────
+    def _content(self):
+        """The file itself (the screen reads binary fields as their size only)."""
+        return base64.b64decode(self.with_context(bin_size=False).file or b'')
+
+    def _file_hash(self):
+        return hashlib.sha1(self._content()).hexdigest()
+
+    def _previous_log(self):
+        return self.env['yr.migration.log'].search([('file_hash', '=', self._file_hash())], limit=1) \
+            if self.file else self.env['yr.migration.log']
+
+    @api.depends('file')
+    def _compute_previous_import(self):
+        for wizard in self:
+            log = wizard._previous_log()
+            if not log:
+                wizard.previous_import = False
+            elif log.state == 'done':
+                wizard.previous_import = _(
+                    '<p class="text-info">Ce fichier a déjà été importé le %(date)s (%(done)s lignes). Le réimporter '
+                    'met à jour les données, sans doublon.</p>', date=fields.Datetime.to_string(log.date_end or
+                                                                                               log.date_start),
+                    done=log.done)
+            else:
+                wizard.previous_import = _(
+                    '<p class="text-warning">Import de ce fichier interrompu le %(date)s à %(done)s / %(total)s lignes. '
+                    '« Importer » reprend où il s\'est arrêté (les lignes déjà enregistrées ne sont pas refaites).</p>',
+                    date=fields.Datetime.to_string(log.date_start), done=log.done, total=log.total)
+
+    def _can_commit(self):
+        # not inside the automated tests (one transaction, rolled back)
+        return not odoo_module.current_test and not self.env.registry.in_test_mode()
+
+    def _commit(self):
+        """Saves what is imported so far: an interrupted import resumes from there."""
+        if self._can_commit():
+            self.env.cr.commit()
+
+    def _progress(self, done, total, label, force=False):
+        """Live progress (bar of the import screen), written apart from the import transaction."""
+        log = self.log_id
+        if not log:
+            return
+        now = time.monotonic()
+        if not force and now - self.env.context.get('yr_progress_clock', [0])[0] < 1.0:
+            return
+        self.env.context.get('yr_progress_clock', [0])[0] = now
+        if not self._can_commit():
+            log.sudo().write({'done': done, 'total': total, 'label': label})
+            return
+        with self.env.registry.cursor() as cr:
+            cr.execute('UPDATE yr_migration_log SET done = %s, total = %s, label = %s WHERE id = %s',
+                       (done, total, label, log.id))
+
+    def get_progress(self):
+        """Polled by the import screen while the import runs."""
+        log = self.sudo().log_id
+        if not log:
+            return {}
+        return {'state': log.state, 'done': log.done, 'total': log.total, 'label': log.label or '',
+                'progress': log.progress}
 
     # ── reading ──────────────────────────────────────────────────────────
     def _rows(self, raw=False):
         """Header (normalised, or as is with raw=True) + data rows, empty rows skipped."""
-        content = base64.b64decode(self.file or b'')
+        content = self._content()
         name = (self.filename or '').lower()
         if name.endswith(('.xlsx', '.xlsm')) or content[:2] == b'PK':
             import openpyxl
             workbook = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
             sheet = self.env.context.get('yr_sheet')
-            rows = (workbook[sheet] if sheet else workbook.active).iter_rows(values_only=True)
+            worksheet = workbook[sheet] if sheet else workbook.active
+            total = worksheet.max_row or 0
+            rows = worksheet.iter_rows(values_only=True)
         else:
             decoded = ''
             for encoding in ('utf-8-sig', 'cp1252', 'latin-1'):
@@ -271,9 +345,13 @@ class YrMigrationImport(models.TransientModel):
                 except UnicodeDecodeError:
                     continue
             delimiter = max([';', ',', '\t', '|'], key=decoded[:4096].count)
+            total = decoded.count('\n')
             rows = csv.reader(io.StringIO(decoded), delimiter=delimiter)
         header = None
-        for row in rows:
+        reporting = not raw and self.env.context.get('yr_report_reading')
+        for count, row in enumerate(rows, start=1):
+            if reporting and count % 500 == 0:
+                self._progress(count, total, _('Lecture du fichier'))
             if not any(c not in (None, '') and str(c).strip() for c in row):
                 continue
             if header is None:
@@ -286,7 +364,7 @@ class YrMigrationImport(models.TransientModel):
 
     def _sheet_names(self):
         """Sheets of an Excel workbook (empty for a CSV file)."""
-        content = base64.b64decode(self.file or b'')
+        content = self._content()
         if not ((self.filename or '').lower().endswith(('.xlsx', '.xlsm')) or content[:2] == b'PK'):
             return []
         import openpyxl
@@ -359,22 +437,44 @@ class YrMigrationImport(models.TransientModel):
         self.ensure_one()
         if not self.file_type:
             raise UserError(_('Type de fichier non reconnu : choisissez-le dans la liste.'))
+        previous = self._previous_log()
+        resume = bool(previous) and previous.state != 'done'
+        log = previous if resume else self.env['yr.migration.log'].create({
+            'name': self.filename or _('Fichier'), 'file_hash': self._file_hash(), 'file_type': self.file_type})
+        log.write({'state': 'running', 'label': _('Démarrage'), 'user_id': self.env.uid})
+        self.log_id = log
+        self._commit()                       # the screen can follow the progress from now on
         env = self.with_context(tracking_disable=True, mail_create_nolog=True, mail_notrack=True,
-                                yr_migration_force=True)
+                                yr_migration_force=True, yr_resume=resume, yr_progress_clock=[0],
+                                yr_report_reading=True)
         if self.file_type == 'workbook':
             parts = [(sheet, kind) for sheet, kind in self._sheet_kinds()]
         else:
             sheets = [sheet for sheet, kind in self._sheet_kinds() if kind == self.file_type]
             parts = [(sheets[0] if sheets else None, self.file_type)]
         result = ''
-        for sheet, kind in parts:
-            stats = defaultdict(int)
-            errors = []
-            getattr(env.with_context(yr_sheet=sheet), '_import_%s' % kind)(stats, errors)
-            result += self._render(stats, errors, kind, sheet if self.file_type == 'workbook' else None)
+        try:
+            for sheet, kind in parts:
+                stats = defaultdict(int)
+                errors = []
+                if resume:
+                    stats['resumed'] = 1
+                getattr(env.with_context(yr_sheet=sheet), '_import_%s' % kind)(stats, errors)
+                result += self._render(stats, errors, kind, sheet if self.file_type == 'workbook' else None)
+        except Exception:
+            if self._can_commit():
+                self.env.cr.rollback()
+                with self.env.registry.cursor() as cr:
+                    cr.execute("UPDATE yr_migration_log SET state = 'failed' WHERE id = %s", (log.id,))
+            raise
+        # the progress was written beside this transaction: a fresh one sees it (no concurrent-update error)
+        self._commit()
+        log.invalidate_recordset()
+        log.write({'state': 'done', 'result': result, 'date_end': fields.Datetime.now(), 'label': _('Terminé'),
+                   'done': max(log.done, log.total)})
         self.write({'state': 'done', 'result': result})
-        return {'type': 'ir.actions.act_window', 'res_model': self._name, 'res_id': self.id, 'view_mode': 'form',
-                'target': 'new'}
+        return {'type': 'ir.actions.act_window', 'name': _('Reprise fastmag'), 'res_model': self._name,
+                'res_id': self.id, 'view_mode': 'form', 'target': 'new'}
 
     def _render(self, stats, errors, kind=None, sheet=None):
         labels = {
@@ -385,7 +485,8 @@ class YrMigrationImport(models.TransientModel):
             'tickets': _('Tickets'), 'purchases': _('Achats clients (historique CRM)'),
             'employees': _('Vendeurs créés (Employés)'), 'unknown_products': _('Lignes sans article connu'),
             'sellers_updated': _('Vendeurs mis à jour'), 'closed': _('Magasins fermés (archivés)'),
-            'companies': _('Sociétés (filiales) créées'),
+            'companies': _('Sociétés (filiales) créées'), 'pos': _('Points de vente (caisses) créés'),
+            'already': _('Lignes déjà importées (reprise : non refaites)'),
         }
         title = dict(FILE_TYPES)[kind or self.file_type]
         if sheet:
@@ -636,6 +737,9 @@ class YrMigrationImport(models.TransientModel):
             if len(to_create) >= BATCH:
                 self._create_customers(Partner, to_create, stats, errors)
                 to_create = []
+                self._commit()                          # an interruption resumes from here
+                self._progress(stats['created'] + stats['updated'] + stats['skipped'], len(items),
+                               _('Enregistrement des clients'))
         if to_create:
             self._create_customers(Partner, to_create, stats, errors)
         cards = list({text(i['card']) for i in items})
@@ -820,6 +924,8 @@ class YrMigrationImport(models.TransientModel):
                 stats['closed'] += 1
         if self.store_companies:
             self._store_companies_for(in_file, stats)
+        if self.store_pos:
+            self._store_pos_for(in_file, stats, errors)
 
     def _store_companies_for(self, stores, stats):
         """One company per store: a branch of the main company (found by name, else created). A store sharing its
@@ -828,7 +934,8 @@ class YrMigrationImport(models.TransientModel):
         Store = self.env['loyalty.store'].sudo().with_context(active_test=False)
         root = self.env.company.root_id or self.env.company
         family = Company.search([('id', 'child_of', root.id)])
-        for store in stores.sudo():
+        for rank, store in enumerate(stores.sudo(), start=1):
+            self._progress(rank, len(stores), _('Sociétés (filiales) des magasins'))
             alone = Store.search_count([('company_id', '=', store.company_id.id), ('id', '!=', store.id)]) == 0
             if store.company_id != root and alone:
                 continue                                    # already its own company
@@ -849,6 +956,51 @@ class YrMigrationImport(models.TransientModel):
             # the user who imports sees the new subsidiaries (others: Paramètres › Utilisateurs)
             if company not in self.env.user.company_ids:
                 self.env.user.sudo().company_ids = [(4, company.id)]
+
+    def _store_pos_for(self, stores, stats, errors):
+        """A till (point de vente) for each open physical store without one, in the store's company: with a
+        warehouse and the payment methods « Espèces » / « Carte bancaire » there if the company has none."""
+        root = self.env.company.root_id or self.env.company
+        todo = stores.sudo().filtered(lambda s: s.active and s.store_type == 'store' and not s.pos_config_ids)
+        if not todo:
+            return
+        # new subsidiaries get their accounting (POS journal…) when the transaction is saved: now
+        self._progress(0, len(todo), _('Comptabilité des filiales'), force=True)
+        self.env.cr.precommit.run()
+        for rank, store in enumerate(todo, start=1):
+            self._progress(rank, len(todo), _('Caisses des magasins'), force=True)
+            company = store.company_id
+            env = self.env(context=dict(self.env.context, allowed_company_ids=[company.id] + root.ids),
+                           su=True)
+            try:
+                with self.env.cr.savepoint():
+                    Warehouse = env['stock.warehouse'].with_company(company)
+                    if not Warehouse.search([('company_id', '=', company.id)], limit=1):
+                        code = re.sub(r'[^A-Z0-9]', '', (store.name or '').upper())[:5] or 'MAG'
+                        Warehouse.create({'name': store.name, 'code': code, 'company_id': company.id})
+                    Method = env['pos.payment.method'].with_company(company)
+                    methods = Method.search([('company_id', '=', company.id)])
+                    if not methods:
+                        Journal = env['account.journal']
+                        domain = Journal._check_company_domain(company)
+                        # a cash journal can serve one cash method only: the subsidiary gets its own
+                        cash = Journal.search([('company_id', '=', company.id), ('type', '=', 'cash')], limit=1)
+                        if not cash:
+                            prefix = 'C' + re.sub(r'[^A-Z0-9]', '', (store.name or '').upper())[:3]
+                            code = next(c for c in [prefix] + ['%s%d' % (prefix[:3], n) for n in range(1, 100)]
+                                        if not Journal.search_count([*domain, ('code', '=', c)]))
+                            cash = Journal.create({'name': _('Espèces %s', store.name), 'type': 'cash',
+                                                   'code': code, 'company_id': company.id})
+                        bank = Journal.search([*domain, ('type', '=', 'bank')], limit=1)
+                        methods = Method.create([
+                            {'name': _('Espèces'), 'journal_id': cash.id, 'company_id': company.id},
+                            {'name': _('Carte bancaire'), 'journal_id': bank.id, 'company_id': company.id},
+                        ])
+                    env['pos.config'].with_company(company).create({
+                        'name': store.name, 'crm_store_id': store.id, 'payment_method_ids': [(6, 0, methods.ids)]})
+                    stats['pos'] += 1
+            except Exception as error:  # noqa: BLE001 - reported, the other stores go on
+                errors.append(('-', store.name, _('caisse non créée : %s', error)))
 
     # ── sellers: code magasin (first row of each store), vendeur, code logistique ──
     def _import_sellers(self, stats, errors):
@@ -953,6 +1105,7 @@ class YrMigrationImport(models.TransientModel):
             return employees.get(key, Employee).id or False
 
         visits, to_create, cards = {}, [], set()
+        done = 0
         for item in items:
             store = stores.get(item['shop'])
             if not store:
@@ -969,6 +1122,7 @@ class YrMigrationImport(models.TransientModel):
             cashier, seller = text(item.get('cashier')), text(item.get('seller'))
             vals = {
                 'shop_code': item['shop'], 'store_id': store.id if store else False,
+                'pos_config_id': store.pos_config_ids[:1].id if store else False,
                 'company_id': (store.company_id if store else self.env.company).id,
                 'ticket': item['ticket'], 'sequence': item['sequence'], 'date': item['day'],
                 'cashier_name': cashier or False, 'cashier_id': employee(cashier, False, store),
@@ -982,7 +1136,9 @@ class YrMigrationImport(models.TransientModel):
                 'reason': text(item.get('reason')) or False, 'comment': text(item.get('comment')) or False,
             }
             line = existing.get((item['shop'], item['ticket'], item['sequence']))
-            if line:
+            if line and self.env.context.get('yr_resume'):
+                stats['already'] += 1                   # saved before the interruption
+            elif line:
                 line.write(vals)
                 stats['updated'] += 1
             else:
@@ -995,6 +1151,9 @@ class YrMigrationImport(models.TransientModel):
             if len(to_create) >= 5000:
                 stats['created'] += len(SaleLine.create(to_create))
                 to_create = []
+                self._commit()                          # an interruption resumes from here
+            done += 1
+            self._progress(done, len(items), _('Enregistrement des ventes'))
         if to_create:
             stats['created'] += len(SaleLine.create(to_create))
         SaleLine._link_partners(list(cards))

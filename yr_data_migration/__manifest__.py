@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 {
     'name': 'YR – Reprise fastmag (articles, clients, CA)',
-    'version': '18.0.1.2.0',
+    'version': '18.0.1.3.0',
     'category': 'Sales',
     'summary': 'Champs fastmag manquants (articles, clients, vendeur en caisse) et import des fichiers fastmag',
     'description': """
@@ -39,6 +39,9 @@ S'appuie sur Fidélité & CRM (loyalty_tier_marketing) pour la fiche client (nai
         'wizard/migration_import_views.xml',
     ],
     'assets': {
+        'web.assets_backend': [
+            'yr_data_migration/static/src/backend/**/*',
+        ],
         'point_of_sale._assets_pos': [
             'yr_data_migration/static/src/pos/**/*',
         ],

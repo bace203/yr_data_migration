@@ -17,6 +17,8 @@ class YrLegacySaleLine(models.Model):
 
     shop_code = fields.Char('Magasin fastmag', required=True, index=True)
     store_id = fields.Many2one('loyalty.store', 'Magasin', index=True)
+    pos_config_id = fields.Many2one('pos.config', 'Point de vente', index=True,
+                                    help='Caisse (point de vente) du magasin de la vente.')
     company_id = fields.Many2one('res.company', 'Société', required=True, default=lambda self: self.env.company)
     ticket = fields.Char('Ticket', required=True, index=True)
     sequence = fields.Integer('N° de ligne', default=1)

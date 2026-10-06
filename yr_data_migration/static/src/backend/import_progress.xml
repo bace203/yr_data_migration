@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<templates xml:space="preserve">
+    <t t-name="yr_data_migration.ImportProgress">
+        <div t-if="state.info" class="my-2">
+            <div class="d-flex justify-content-between small mb-1">
+                <span><i class="fa fa-spinner fa-spin me-1"/><t t-esc="state.info.label"/></span>
+                <span t-if="state.info.total"><t t-esc="state.info.done"/> / <t t-esc="state.info.total"/> · <t t-esc="percent"/> %</span>
+            </div>
+            <div class="progress" style="height: 10px;">
+                <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar"
+                     t-att-style="'width: ' + percent + '%'"/>
+            </div>
+        </div>
+    </t>
+</templates>

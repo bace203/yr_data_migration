@@ -6,6 +6,8 @@
         <field name="arch" type="xml">
             <form string="Reprise fastmag">
                 <field name="state" invisible="1"/>
+                <field name="log_id" invisible="1"/>
+                <widget name="yr_import_progress"/>
                 <div invisible="state != 'draft'">
                     <p class="text-muted">
                         Choisissez un fichier fastmag : il est reconnu tout seul. Ordre conseillé :
@@ -21,6 +23,7 @@
                                    decoration-success="file_type" placeholder="Non reconnu : choisissez"/>
                         </group>
                     </group>
+                    <field name="previous_import" invisible="not previous_import" nolabel="1"/>
                     <group invisible="file_type != 'article'" string="Articles">
                         <field name="create_categories"/>
                         <field name="update_prices"/>
@@ -38,6 +41,7 @@
                     </div>
                     <group invisible="file_type not in ('stores', 'workbook')" string="Magasins">
                         <field name="store_companies"/>
+                        <field name="store_pos"/>
                     </group>
                     <div invisible="file_type != 'stores'" class="text-muted mb-2">
                         Une ligne par magasin : nom et code (ex. AZUR | 23), ou nom, code fastmag et numéro
@@ -70,6 +74,57 @@
     <menuitem id="menu_yr_migration_import" name="Reprise fastmag (magasins, articles, clients, ventes)"
               parent="loyalty_tier_marketing.menu_loyalty_tier_config" action="action_yr_migration_import"
               sequence="90"/>
+    <record id="yr_migration_log_view_list" model="ir.ui.view">
+        <field name="name">yr.migration.log.list</field>
+        <field name="model">yr.migration.log</field>
+        <field name="arch" type="xml">
+            <list string="Imports fastmag" create="false" decoration-warning="state == 'failed'"
+                  decoration-info="state == 'running'">
+                <field name="date_start"/>
+                <field name="name"/>
+                <field name="file_type"/>
+                <field name="done"/>
+                <field name="total"/>
+                <field name="progress" widget="progressbar"/>
+                <field name="state" widget="badge"/>
+                <field name="user_id" optional="show"/>
+                <field name="date_end" optional="hide"/>
+            </list>
+        </field>
+    </record>
+    <record id="yr_migration_log_view_form" model="ir.ui.view">
+        <field name="name">yr.migration.log.form</field>
+        <field name="model">yr.migration.log</field>
+        <field name="arch" type="xml">
+            <form string="Import fastmag" create="false">
+                <sheet>
+                    <group>
+                        <group>
+                            <field name="name"/>
+                            <field name="file_type"/>
+                            <field name="state"/>
+                        </group>
+                        <group>
+                            <field name="done"/>
+                            <field name="total"/>
+                            <field name="progress" widget="progressbar"/>
+                            <field name="date_start"/>
+                            <field name="date_end"/>
+                        </group>
+                    </group>
+                    <field name="result"/>
+                </sheet>
+            </form>
+        </field>
+    </record>
+    <record id="action_yr_migration_log" model="ir.actions.act_window">
+        <field name="name">Historique des imports fastmag</field>
+        <field name="res_model">yr.migration.log</field>
+        <field name="view_mode">list,form</field>
+    </record>
+    <menuitem id="menu_yr_migration_log" name="Historique des imports fastmag"
+              parent="loyalty_tier_marketing.menu_loyalty_tier_config" action="action_yr_migration_log"
+              sequence="91"/>
     <menuitem id="menu_yr_migration_import_stock" name="Reprise fastmag (articles)"
               parent="stock.menu_stock_config_settings" action="action_yr_migration_import" sequence="90"
               groups="stock.group_stock_manager"/>

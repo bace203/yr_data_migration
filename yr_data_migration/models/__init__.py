@@ -7,3 +7,4 @@ from . import pos_order
 from . import loyalty_store
 from . import legacy_purchase
 from . import legacy_sale
+from . import migration_log

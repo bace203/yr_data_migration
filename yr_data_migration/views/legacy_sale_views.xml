@@ -11,6 +11,7 @@
                 </header>
                 <field name="date"/>
                 <field name="store_id" optional="show"/>
+                <field name="pos_config_id" optional="show"/>
                 <field name="shop_code" optional="hide"/>
                 <field name="ticket"/>
                 <field name="cashier_id" optional="show"/>
@@ -77,6 +78,7 @@
                     <filter name="by_seller" string="Vendeur" context="{'group_by': 'seller_name'}"/>
                     <filter name="by_cashier" string="Utilisateur (caissier)" context="{'group_by': 'cashier_name'}"/>
                     <filter name="by_store" string="Magasin" context="{'group_by': 'store_id'}"/>
+                    <filter name="by_pos" string="Point de vente" context="{'group_by': 'pos_config_id'}"/>
                     <filter name="by_axe" string="Axe" context="{'group_by': 'axe'}"/>
                     <filter name="by_day" string="Jour" context="{'group_by': 'date:day'}"/>
                 </group>
