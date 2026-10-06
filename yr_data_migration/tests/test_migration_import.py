@@ -300,6 +300,26 @@ class TestMigrationImport(TransactionCase):
         self.assertEqual(stores.get('YR_ZEPHYRQ'), zephyr)
         self.assertIn('YR_ZEPHYRQ', zephyr.yr_fastmag_code)
 
+    def test_store_list_again_with_main_company_selected(self):
+        """Stores already in their subsidiary, the session on the main company only (a normal user): re-importing a
+        store list finds them (no « code unique » error, nothing duplicated)."""
+        admin = self.env.ref('base.user_admin')
+        root = self.env.company.root_id
+        admin.company_ids |= root
+        rows = [['Magasin', 'Code'], ['CARREFOURW', 981], ['GEANTW', 982]]
+        self._import(rows)
+        stores = self.env['loyalty.store'].search([('code', 'in', ['981', '982'])])
+        self.assertEqual(len(stores.company_id), 2)
+        admin.company_ids |= stores.company_id
+        Wizard = self.env['yr.migration.import'].with_user(admin).with_context(allowed_company_ids=[root.id])
+        for file_rows in (rows, [['Magasin ', 'Code -Magasin ', 'Num-Magasin '], ['CARREFOURW', 'YR_CARRW', 981],
+                                 ['GEANTW', 'YR_GEANTW', 982]]):
+            wizard = Wizard.create({'file': xlsx(file_rows), 'filename': 'magasins.xlsx'})
+            wizard.action_import()
+            self.assertNotIn('en erreur', wizard.result)
+        self.assertEqual(self.env['loyalty.store'].search_count([('code', 'in', ['981', '982'])]), 2)
+        self.assertIn('YR_CARRW', stores.filtered(lambda s: s.code == '981').yr_fastmag_code)
+
     def test_workbook_stores_and_sellers(self):
         """The « vendeurs / magasins » workbook: Feuil1 sellers per store, Feuil2 magasin | YR_ code | number."""
         Store = self.env['loyalty.store']

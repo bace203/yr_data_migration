@@ -539,7 +539,8 @@ class YrMigrationImport(models.TransientModel):
     # ── customers ────────────────────────────────────────────────────────
     def _stores(self):
         # closed (archived) stores too: their old sales and sellers are still imported
-        return StoreIndex(self.env['loyalty.store'].with_context(active_test=False).search([]))
+        # every company (the stores are in their subsidiaries, whatever company is selected in the session)
+        return StoreIndex(self.env['loyalty.store'].sudo().with_context(active_test=False).search([]))
 
     def _existing_customers(self, cards):
         Partner = self.env['res.partner'].with_context(active_test=False)
@@ -757,9 +758,14 @@ class YrMigrationImport(models.TransientModel):
                 return value in ('non', 'n', '0', 'false', 'faux')
             return value.startswith(('ferm', 'clos', 'inactif', 'archiv')) or value in ('oui', 'o', '1', 'x') and \
                 status_col == 'ferme'
-        Store = self.env['loyalty.store'].with_context(active_test=False)
+        # every company: the stores already moved to their subsidiary are found whatever company is selected
+        Store = self.env['loyalty.store'].sudo().with_context(active_test=False)
         stores = Store.search([])
         in_file = Store.browse()
+
+        def code_taken(code, company, store=None):
+            return any(s != store and s.company_id == company and (s.code or '').strip().upper() == code.upper()
+                       for s in stores)
         for line_no, row in enumerate(rows, start=2):
             row = list(row) + [None, None, None]
             name, code = text(row[name_idx]), text(row[code_idx])
@@ -781,6 +787,10 @@ class YrMigrationImport(models.TransientModel):
                 vals = {}
                 aliases = [a.strip() for a in (store.yr_fastmag_code or '').split(',') if a.strip()]
                 if store.code != code:
+                    if code_taken(code, store.company_id, store):
+                        errors.append((line_no, name, _('le code %s est déjà celui d\'un autre magasin de la '
+                                                        'société %s', code, store.company_id.name)))
+                        continue
                     # the former code stays known for the files that still use it
                     vals['code'] = code
                     aliases.append(store.code)
@@ -797,6 +807,10 @@ class YrMigrationImport(models.TransientModel):
                     stats['skipped'] += 1
                 continue
             web = any(word in norm(name) for word in ('eshop', 'siteweb', 'website', 'ecommerce'))
+            if code_taken(code, self.env.company):
+                errors.append((line_no, name, _('le code %s est déjà celui d\'un autre magasin de la société %s',
+                                                code, self.env.company.name)))
+                continue
             store = Store.create({'name': name, 'code': code, 'store_type': 'website' if web else 'store',
                                   'yr_fastmag_code': fastmag or False, 'active': not is_closed})
             stores |= store
@@ -829,6 +843,8 @@ class YrMigrationImport(models.TransientModel):
                 stats['companies'] += 1
             elif store.store_type == 'website' and not company.crm_is_website:
                 company.crm_is_website = True
+            if Store.search_count([('company_id', '=', company.id), ('code', '=', store.code), ('id', '!=', store.id)]):
+                continue                                    # that subsidiary already has a store with this code
             store.company_id = company
             # the user who imports sees the new subsidiaries (others: Paramètres › Utilisateurs)
             if company not in self.env.user.company_ids:
