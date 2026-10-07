@@ -17,6 +17,8 @@ class ResPartner(models.Model):
     yr_entry_date = fields.Date('Date d\'entrée (adhésion)')
     yr_first_purchase_legacy = fields.Date('Premier achat (fastmag)')
     yr_seller_code = fields.Char('Vendeuse (fastmag)')
+    yr_seller_id = fields.Many2one('hr.employee', 'Créé par (vendeuse)', index=True,
+                                   help='Vendeuse qui a créé la fiche dans fastmag (code vendeuse du fichier).')
     yr_legacy_segment = fields.Char('Segment fastmag', help='Ex. FID, OC, PA, MO')
     yr_npai = fields.Boolean('NPAI', help='N\'habite pas à l\'adresse indiquée (courrier revenu).')
 

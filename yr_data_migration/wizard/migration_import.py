@@ -445,7 +445,7 @@ class YrMigrationImport(models.TransientModel):
         self.log_id = log
         self._commit()                       # the screen can follow the progress from now on
         env = self.with_context(tracking_disable=True, mail_create_nolog=True, mail_notrack=True,
-                                yr_migration_force=True, yr_resume=resume, yr_progress_clock=[0],
+                                yr_migration_force=True, yr_resume=resume, yr_progress_clock=[0], yr_cache={},
                                 yr_report_reading=True)
         if self.file_type == 'workbook':
             parts = [(sheet, kind) for sheet, kind in self._sheet_kinds()]
@@ -656,11 +656,14 @@ class YrMigrationImport(models.TransientModel):
     def _customer_vals(self, item, kind, stores, stats):
         unknown_years = (2000,) if kind == 'client_old' and self.year_2000_unknown else ()
         name = ' '.join(filter(None, [text(item.get('lastname')), text(item.get('firstname'))]))
-        street = ' '.join(filter(None, [text(item.get('street')), text(item.get('street2')),
-                                        text(item.get('street3'))]))
+        # Rue → street, Rue 2 (and 3) → street2
+        street2 = ' '.join(filter(None, [text(item.get('street2')), text(item.get('street3'))]))
         vals = {
-            'name': name, 'street': street, 'city': text(item.get('city')), 'zip': text(item.get('zip')),
+            'name': name, 'street': text(item.get('street')), 'street2': street2,
+            'city': text(item.get('city')), 'zip': text(item.get('zip')),
+            'country_id': self._tunisia_id(),
             'email': text(item.get('email')).lower(), 'yr_seller_code': text(item.get('seller')),
+            'yr_seller_id': self._seller_id(text(item.get('seller'))),
             'yr_legacy_old_code': text(item.get('old_code')), 'yr_legacy_segment': text(item.get('segment')),
             'yr_entry_date': parse_date(item.get('entry_date')),
             'yr_first_purchase_legacy': parse_date(item.get('first_purchase')),
@@ -690,6 +693,33 @@ class YrMigrationImport(models.TransientModel):
                 stats['unknown_stores'] += 1
         return {k: v for k, v in vals.items() if v not in (None, '', False) or k == 'birth_year'}
 
+    def _cache(self):
+        """Per-import cache (dict given in the context by action_import)."""
+        cache = self.env.context.get('yr_cache')
+        return cache if cache is not None else {}
+
+    def _tunisia_id(self):
+        cache = self._cache()
+        if 'tunisia' not in cache:
+            tunisia = self.env.ref('base.tn', raise_if_not_found=False)
+            cache['tunisia'] = tunisia.id if tunisia else False
+        return cache['tunisia']
+
+    def _seller_id(self, code):
+        """Seller of the file (code logistique 703, or fastmag name) → employee."""
+        if not code:
+            return False
+        cache = self._cache()
+        if 'sellers' not in cache:
+            Employee = self.env['hr.employee'].sudo().with_context(active_test=False)
+            sellers = {}
+            for employee in Employee.search([('yr_logistic_code', '!=', False)]):
+                sellers[employee.yr_logistic_code.strip().upper()] = employee.id
+            for key, employee in self.env['yr.legacy.sale.line']._employee_index().items():
+                sellers.setdefault(key, employee.id)
+            cache['sellers'] = sellers
+        return cache['sellers'].get(' '.join(code.upper().split()), False)
+
     def _import_customers(self, kind, stats, errors):
         items = [i for i in self._records(kind) if text(i.get('card'))]
         stats['rows'] = len(items)
@@ -709,6 +739,10 @@ class YrMigrationImport(models.TransientModel):
                     continue
                 # complete the empty fields only; the frozen migration amount is never replaced
                 update = {k: v for k, v in vals.items() if not partner.sudo()[k] and k != 'birth_year'}
+                # imported before with Rue 2 / Rue 3 glued to the street: split again
+                glued = ' '.join(filter(None, [vals.get('street'), vals.get('street2')]))
+                if vals.get('street2') and partner.street == glued and partner.street != vals.get('street'):
+                    update.update(street=vals['street'], street2=vals['street2'])
                 if 'birth_day' in update and vals.get('birth_year'):
                     update['birth_year'] = vals['birth_year']
                 if 'birth_day' in update and 'birth_month' not in update:

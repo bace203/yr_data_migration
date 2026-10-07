@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="res_config_settings_view_form_fastmag" model="ir.ui.view">
+        <field name="name">res.config.settings.form.fastmag</field>
+        <field name="model">res.config.settings</field>
+        <field name="inherit_id" ref="loyalty_tier_marketing.res_config_settings_view_loyalty"/>
+        <field name="arch" type="xml">
+            <xpath expr="//app[@name='loyalty_tier_marketing']" position="inside">
+                <block title="Reprise fastmag" groups="base.group_system">
+                    <setting string="Supprimer les clients et ventes importés"
+                             help="Pour réimporter les fichiers clients et ventes depuis zéro. Les magasins, vendeurs et articles sont gardés ; un client déjà utilisé ailleurs (ticket, facture…) est archivé.">
+                        <button name="action_yr_delete_imported" type="object" string="Supprimer les données importées"
+                                class="btn-danger" icon="fa-trash"
+                                confirm="Supprimer tous les clients et toutes les ventes importés de fastmag ? Cette action est définitive."/>
+                    </setting>
+                </block>
+            </xpath>
+        </field>
+    </record>
+</odoo>

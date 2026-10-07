@@ -9,6 +9,14 @@
             <xpath expr="//field[@name='crm_store_id']" position="before">
                 <field name="yr_gender" invisible="is_company"/>
             </xpath>
+            <!-- one « Créé par »: the seller of the fastmag file for imported customers, else the standard creator -->
+            <xpath expr="//field[@name='create_uid']" position="attributes">
+                <attribute name="invisible">not crm_is_customer or not id or yr_seller_id</attribute>
+            </xpath>
+            <xpath expr="//field[@name='create_uid']" position="after">
+                <field name="yr_seller_id" string="Créé par" readonly="1" invisible="not yr_seller_id"
+                       options="{'no_open': True}"/>
+            </xpath>
             <xpath expr="//page[@name='crm_insight']" position="inside">
                 <group string="Historique fastmag" name="yr_fastmag" invisible="not yr_legacy_code">
                     <group>

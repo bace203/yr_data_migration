@@ -169,6 +169,7 @@ class TestMigrationImport(TransactionCase):
                 datetime(2017, 5, 11), shop, 68, datetime(2018, 3, 22), mobile, None, amount]
 
     def test_customers_new_file(self):
+        seller = self.env['hr.employee'].create({'name': 'Vendeuse 68', 'yr_logistic_code': '68'})
         rows = [NEW_HEADER,
                 self._new_row(990065941, 'KSOURI', 'AMEL', datetime(1987, 5, 15), 98461465, 43.7, 'YR_YOUG'),
                 self._new_row(990070668, 'BEN', 'AIED AMEL', '20/11/0000', 24379898, 43),
@@ -186,6 +187,8 @@ class TestMigrationImport(TransactionCase):
         self.assertEqual((amel.yr_entry_date, amel.yr_first_purchase_legacy), (date(2017, 5, 11), date(2018, 3, 22)))
         self.assertEqual(amel.sudo().yr_legacy_amount, 43.7)
         self.assertEqual(amel.yr_seller_code, '68')
+        self.assertEqual(amel.yr_seller_id, seller)                  # « Créé par » = the seller of the file
+        self.assertEqual(amel.country_id, self.env.ref('base.tn'))
         ben = Partner.search([('customer_code', '=', '990070668')])
         self.assertEqual((ben.name, ben.birth_day, ben.birth_month, ben.birth_year),
                          ('BEN AIED AMEL', '20', '11', False))     # 0000: day and month only
@@ -201,6 +204,33 @@ class TestMigrationImport(TransactionCase):
         self.assertEqual(amel.email, 'amel@example.com')
         with self.assertRaises(UserError):
             amel.sudo().write({'yr_legacy_amount': 1})
+
+    def test_delete_imported_customers_and_sales(self):
+        """Paramètres button: imported customers and sales deleted (a customer used elsewhere is archived);
+        stores and sellers kept."""
+        self._import([NEW_HEADER, self._new_row(990022222, 'DEL', 'ONE', datetime(1990, 1, 1), 98000002),
+                      self._new_row(990033333, 'DEL', 'TWO', datetime(1990, 1, 1), 98000003)])
+        Partner = self.env['res.partner'].with_context(active_test=False)
+        used = Partner.search([('customer_code', '=', '990033333')])
+        self.env['sale.order'].create({'partner_id': used.id})
+        self.env['yr.legacy.sale.line'].create({'shop_code': 'YR_YOUG', 'ticket': 'DEL1', 'date': date.today()})
+        seller = self.env['hr.employee'].create({'name': 'Gardée', 'yr_logistic_code': '9911'})
+        self.env['res.config.settings'].create({}).action_yr_delete_imported()
+        self.assertFalse(Partner.search([('customer_code', '=', '990022222')]))
+        self.assertFalse(used.active)                                   # used by a sale order: archived
+        self.assertFalse(self.env['yr.legacy.sale.line'].search_count([]))
+        self.assertTrue(self.store.exists() and seller.exists())
+
+    def test_customers_street2(self):
+        """Rue 2 (and 3) → street2; customers imported before with everything in the street are fixed on re-import."""
+        row = self._new_row(990011111, 'RUE', 'DEUX', datetime(1990, 1, 1), 98000001)
+        row[5], row[6] = 'RESIDENCE LES PINS', 'BLOC B'
+        self._import([NEW_HEADER, row])
+        partner = self.env['res.partner'].search([('customer_code', '=', '990011111')])
+        self.assertEqual((partner.street, partner.street2), ('4 RUE EL KAADINE', 'RESIDENCE LES PINS BLOC B'))
+        partner.write({'street': '4 RUE EL KAADINE RESIDENCE LES PINS BLOC B', 'street2': False})   # old import
+        self._import([NEW_HEADER, row])
+        self.assertEqual((partner.street, partner.street2), ('4 RUE EL KAADINE', 'RESIDENCE LES PINS BLOC B'))
 
     def test_customers_old_file(self):
         def old(card, birthday, last, first, tel, gender=None, npai=0):
