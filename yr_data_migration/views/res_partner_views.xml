@@ -21,6 +21,7 @@
                 <group string="Historique fastmag" name="yr_fastmag" invisible="not yr_legacy_code">
                     <group>
                         <field name="yr_legacy_code"/>
+                        <field name="yr_client_code" invisible="not yr_client_code"/>
                         <field name="yr_legacy_old_code" invisible="not yr_legacy_old_code"/>
                         <field name="yr_entry_date"/>
                         <field name="yr_first_purchase_legacy"/>
@@ -52,6 +53,7 @@
         <field name="arch" type="xml">
             <field name="name" position="after">
                 <field name="yr_legacy_code" string="Code fastmag"/>
+                <field name="yr_client_code" string="Code client fastmag (Y…)"/>
             </field>
         </field>
     </record>

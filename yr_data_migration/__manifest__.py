@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 {
     'name': 'YR – Reprise fastmag (articles, clients, CA)',
-    'version': '18.0.1.4.0',
+    'version': '18.0.1.5.0',
     'category': 'Sales',
     'summary': 'Champs fastmag manquants (articles, clients, vendeur en caisse) et import des fichiers fastmag',
     'description': """
@@ -16,8 +16,9 @@ Reprise des données fastmag (Yves Rocher) dans Posify 18
 * Commande PdV : vendeur (employé, différent du caissier), choisi en caisse avant le paiement (réglable par caisse :
   non demandé, facultatif, obligatoire ; liste des vendeurs). Imprimé sur le ticket.
 * Import dans Posify : un seul écran, le type de fichier est reconnu tout seul (magasins, articles, clients
-  2017-2026, clients ancien système, CA clients, détail des ventes avec utilisateur et vendeur).
-  Réimportable sans doublon.
+  2017-2026, clients ancien système, liste client (codes Y…), CA clients, détail des ventes avec caissier et
+  vendeur). Réimportable sans doublon. Un client sans vrai numéro de carte n'est pas importé ; les ventes sans
+  carte retrouvent leur client par le code Y. Rapport détaillé (Excel) après chaque import.
 * Ventes fastmag par vendeur : tableau croisé / liste des lignes de ventes importées.
 
 S'appuie sur Fidélité & CRM (loyalty_tier_marketing) pour la fiche client (naissance, n° client, magasin).

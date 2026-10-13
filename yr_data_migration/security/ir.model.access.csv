@@ -7,3 +7,5 @@ access_yr_legacy_sale_line_user,yr.legacy.sale.line user,model_yr_legacy_sale_li
 access_yr_legacy_sale_line_manager,yr.legacy.sale.line manager,model_yr_legacy_sale_line,loyalty_tier_marketing.group_loyalty_tier_manager,1,1,1,1
 access_yr_migration_log_manager,yr.migration.log manager,model_yr_migration_log,loyalty_tier_marketing.group_loyalty_tier_manager,1,1,1,1
 access_yr_migration_log_stock,yr.migration.log stock,model_yr_migration_log,stock.group_stock_manager,1,1,1,1
+access_yr_client_code_user,yr.client.code user,model_yr_client_code,base.group_user,1,0,0,0
+access_yr_client_code_manager,yr.client.code manager,model_yr_client_code,loyalty_tier_marketing.group_loyalty_tier_manager,1,1,1,1

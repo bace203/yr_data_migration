@@ -18,6 +18,8 @@ class YrMigrationLog(models.Model):
     progress = fields.Float('Avancement (%)', compute='_compute_progress')
     label = fields.Char('Étape', readonly=True)
     result = fields.Html('Résultat', readonly=True)
+    report_file = fields.Binary('Rapport détaillé (Excel)', readonly=True, attachment=True)
+    report_filename = fields.Char(readonly=True)
     user_id = fields.Many2one('res.users', 'Par', default=lambda self: self.env.user, readonly=True)
     date_start = fields.Datetime('Début', default=fields.Datetime.now, readonly=True)
     date_end = fields.Datetime('Fin', readonly=True)

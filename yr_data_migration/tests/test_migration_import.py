@@ -19,6 +19,7 @@ OLD_HEADER = ['compteur', 'numCliente', 'numClienteOLD', 'naissance', 'nom_x', '
               'Seg1', 'Seg2', 'Seg3', 'Seg4', 'Segment', 'dateLastSegment', 'Tel2', 'CdB_H', 'CdB_date', 'SegLettre',
               'Rue2', 'Rue3', 'Champ1', 'sexe']
 CA_HEADER = ['CodeMag', 'date', 'Client', 'Cartefidelite', 'Nom', 'Prenom', 'TOTALCA']
+CODES_HEADER = ['CodeClient', 'Cartefidelite', 'Nom', 'datecreation', 'FidelitePoint', 'Catégorie']
 DETAIL_HEADER = ['CodeMag', 'Vente', 'date', 'Utilisateur', 'Vendeur', 'Client', 'Cartefidelite', 'Nom', 'Prenom',
                  'Barcode', 'gencod', 'Reffournisseur', 'Designation', 'Axe', 'Lignes', 'Quantite', 'Prix', 'Remise',
                  'Total', 'Motif', 'Commentaire']
@@ -451,29 +452,84 @@ class TestMigrationImport(TransactionCase):
         self.assertEqual(Store.search_count([('code', '=', '994')]), 1)
 
     def test_sales_detail_client_column(self):
-        """Sales file « INES-YVESROCHER | CodeMag | … | Client | vente | … | PrixNet | total_1 | valeurArticle »:
-        no card column, the client code is the card."""
-        partner = self.env['res.partner'].create({'name': 'Cliente Y', 'customer_code': 'Y88074Q'})
+        """Sales file « INES-YVESROCHER | CodeMag | … | Client | vente | … »: no card column, the client code (Y…)
+        finds the customer through the « Liste client » file, even when that file is imported after the sales."""
+        self._import([NEW_HEADER, self._new_row(990088074, 'CLIENTE', 'Y', datetime(1990, 1, 2))])
+        partner = self.env['res.partner'].search([('customer_code', '=', '990088074')])
         header = ['INES-YVESROCHER', 'CodeMag', 'Utilisateur', 'Vendeur', 'Date', 'Client', 'vente', 'Barcode',
                   'Quantite', 'Prix', 'remise', 'PrixNet', 'total', 'total_1', 'valeurArticle', 'motif']
         rows = [header,
-                ['INES-YVESROCHER', 'YR_YOUG', 'RIM_T', 'SANAQ', '27/11/2017', 'Y88074Q', 2, 100102550, 1, 34, 0, 34,
+                ['INES-YVESROCHER', 'YR_YOUG', 'RIM_T', 'SANAQ', '27/11/2017', 'Y880741', 2, 100102550, 1, 34, 0, 34,
                  34, 67, 16.73, None],
-                ['INES-YVESROCHER', 'YR_YOUG', 'RIM_T', 'SANAQ', '27/11/2017', 'Y88074Q', 2, 100190813, 1, 33, 0, 33,
+                ['INES-YVESROCHER', 'YR_YOUG', 'RIM_T', 'SANAQ', '27/11/2017', 'Y880741', 2, 100190813, 1, 33, 0, 33,
                  33, 67, 16.239, None],
                 ['INES-YVESROCHER', 'YR_YOUG', 'RIM_T', 'RIMQ', '27/11/2017', None, 1, 100191290, 1, 13, 0, 13, 13, 13,
                  6.397, None],
-                ['INES-YVESROCHER', 'YR_YOUG', 'RIM_T', 'MARWAQ', '27/11/2017', 'Y88074Q', 25, 100195183, 1, 8, 100, 0,
+                ['INES-YVESROCHER', 'YR_YOUG', 'RIM_T', 'MARWAQ', '27/11/2017', 'Y880741', 25, 100195183, 1, 8, 100, 0,
                  0, 132, 3.937, 'CADEAU_PTS']]
         wizard = self._import(rows)
         self.assertEqual(wizard.file_type, 'sales_detail')
+        self.assertIn('code client sans carte connue', wizard.result)
         lines = self.env['yr.legacy.sale.line'].search([('shop_code', '=', 'YR_YOUG'), ('date', '=', date(2017, 11, 27))])
         self.assertEqual(len(lines), 4)
         self.assertEqual(lines.mapped('store_id'), self.store)
+        self.assertFalse(lines.partner_id)                           # code not known yet
+        self.assertEqual(set(lines.mapped('legacy_client_id')), {'Y880741', False})
+        self.assertEqual(lines.filtered(lambda l: l.ticket == '25').reason, 'CADEAU_PTS')
+        # fastmag names kept as text even without any employee
+        self.assertEqual(set(lines.mapped('seller_name')), {'SANAQ', 'RIMQ', 'MARWAQ'})
+        self.assertEqual(set(lines.mapped('cashier_name')), {'RIM_T'})
+        self.assertFalse(lines.seller_id)                            # no employee guessed
+        # « Liste client »: the sales imported before find their customer
+        codes = self._import([CODES_HEADER, ['Y880741', 990088074, 'CLIENTE Y', datetime(2017, 1, 1), 3, 'CLYVRC']])
+        self.assertEqual(codes.file_type, 'client_codes')
         self.assertEqual(lines.filtered(lambda l: l.ticket == '2').partner_id, partner)
         self.assertFalse(lines.filtered(lambda l: l.ticket == '1').partner_id)
-        self.assertEqual(lines.filtered(lambda l: l.ticket == '25').reason, 'CADEAU_PTS')
-        self.assertEqual(set(lines.mapped('seller_name')), {'SANAQ', 'RIMQ', 'MARWAQ'})
+        self.assertEqual(partner.yr_client_code, 'Y880741')
+        purchase = self.env['yr.legacy.purchase'].search([('card', '=', '990088074')])
+        self.assertAlmostEqual(sum(purchase.mapped('amount')), 67.0)
+        # sales imported after the codes: found directly
+        rows[1][6] = rows[2][6] = 3
+        wizard = self._import(rows)
+        self.assertIn('rattachées au client par le code Y', wizard.result)
+
+    def test_client_codes_and_customers_without_card(self):
+        """No real card (empty, 0, 000000, « numCliente »): not imported as a customer, listed in the report."""
+        rows = [NEW_HEADER, self._new_row(990077001, 'AVEC', 'CARTE', datetime(1990, 1, 2)),
+                self._new_row(0, 'SANS', 'CARTE', datetime(1990, 1, 2)),
+                self._new_row('000000', 'ZERO', 'CARTE', datetime(1990, 1, 2))]
+        rows.append(self._new_row(None, 'VIDE', 'CARTE', datetime(1990, 1, 2)))
+        wizard = self._import(rows)
+        Partner = self.env['res.partner'].with_context(active_test=False)
+        self.assertTrue(Partner.search([('customer_code', '=', '990077001')]))
+        self.assertFalse(Partner.search([('name', 'in', ['SANS CARTE', 'ZERO CARTE', 'VIDE CARTE'])]))
+        self.assertIn('non importés) : <b>3</b>', wizard.result)
+        report = self._report(wizard)
+        self.assertEqual(sum(1 for row in report['Détail'] if row[3] == 'Non importé'), 3)
+        self.assertTrue(any(row[1] == 'Clients sans vrai n° de carte fidélité (non importés)'
+                            for row in report['Résumé']))
+        # « Liste client »: codes kept, only real cards linked to customers
+        wizard = self._import([CODES_HEADER, ['Y1', 'numCliente', 'nom prenom', datetime(2017, 1, 1), 0, 'CLYVRC'],
+                               ['Y77001', 990077001, 'AVEC CARTE', datetime(2017, 1, 1), 4, 'CLYVRC'],
+                               ['Y64', '000000', 'BEN AHMED', datetime(2014, 8, 8), 0, 'CLYVRC']])
+        Code = self.env['yr.client.code']
+        self.assertEqual(Code.search([('code', '=', 'Y77001')]).partner_id.customer_code, '990077001')
+        self.assertFalse(Code.search([('code', '=', 'Y64')]).card)
+        self.assertEqual(Code.search_count([('code', 'in', ['Y1', 'Y64', 'Y77001'])]), 3)
+        self.assertFalse(Partner.search([('name', '=', 'BEN AHMED')]))
+        self.assertIn('Codes sans vraie carte (ventes anonymes) : <b>2</b>', wizard.result)
+        # a customer file imported after the codes gets its code; the CA file finds the card from the client number
+        self._import([NEW_HEADER, self._new_row(990077002, 'APRES', 'CODES', datetime(1990, 1, 2))])
+        self._import([CODES_HEADER, ['Y77002', 990077002, 'APRES CODES', datetime(2017, 1, 1), 0, 'CLYVRC']])
+        after = Partner.search([('customer_code', '=', '990077002')])
+        self.assertEqual(after.yr_client_code, 'Y77002')
+        self._import([CA_HEADER, ['YR_YOUG', datetime(2025, 8, 26), 77002, None, 'APRES', 'CODES', 50.0]])
+        self.assertEqual(after.yr_legacy_purchase_ids.amount, 50.0)
+
+    def _report(self, wizard):
+        import openpyxl
+        workbook = openpyxl.load_workbook(io.BytesIO(base64.b64decode(wizard.log_id.report_file)))
+        return {sheet.title: list(sheet.iter_rows(values_only=True)) for sheet in workbook.worksheets}
 
     # ── sales detail ─────────────────────────────────────────────────────
     def _detail(self, ticket, day, cashier, seller, card, ref, ean, name, qty, price, discount, total, reason=None):
@@ -496,7 +552,7 @@ class TestMigrationImport(TransactionCase):
                              'CADEAU_PTS'),
                 self._detail(9199667, day, 'RIM', 'SLIMENI TEST', 9940133181, 'DTT', 75229, 'DROIT DE TIMBRE', 1, 0.1,
                              0, 0.1)]
-        wizard = self._import(rows)
+        wizard = self._import(rows, create_sellers=True)
         self.assertEqual(wizard.file_type, 'sales_detail')
         Line = self.env['yr.legacy.sale.line']
         lines = Line.search([('shop_code', '=', 'YR_YOUG'), ('ticket', 'in', ['9199659', '9199667'])])

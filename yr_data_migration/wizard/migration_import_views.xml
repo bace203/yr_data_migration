@@ -11,9 +11,10 @@
                 <div invisible="state != 'draft'">
                     <p class="text-muted">
                         Choisissez un fichier fastmag : il est reconnu tout seul. Ordre conseillé :
-                        <b>magasins</b> (et vendeurs), <b>articles</b>, <b>clients</b> (2017-2026 puis ancien système), puis
-                        <b>CA clients</b> et <b>détail des ventes</b>.
-                        Un fichier peut être réimporté : rien n'est créé en double.
+                        <b>magasins</b> (et vendeurs), <b>articles</b>, <b>clients</b> (2017-2026 puis ancien système),
+                        <b>liste client</b> (codes Y…), puis <b>CA clients</b> et <b>détail des ventes</b>.
+                        Un fichier peut être réimporté : rien n'est créé en double. Un client sans vrai numéro de
+                        carte fidélité n'est pas importé. Après chaque import : résumé et rapport détaillé (Excel).
                     </p>
                     <group>
                         <group>
@@ -47,6 +48,16 @@
                         Une ligne par magasin : nom et code (ex. AZUR | 23), ou nom, code fastmag et numéro
                         (ex. CARREFOUR | YR_CARR | 2). Les magasins absents sont créés,
                         les autres reçoivent le code (l'ancien code reste reconnu). « eshop » devient le site web.
+                    </div>
+                    <div invisible="file_type != 'client_codes'" class="text-muted mb-2">
+                        Liste client fastmag : le code client (Y88074) des fichiers de ventes et sa carte fidélité.
+                        Les ventes sans carte sont rattachées au client grâce à ce code, même celles déjà importées.
+                        Un code sans vraie carte (vide, 000000…) est gardé mais ne crée pas de client.
+                    </div>
+                    <div invisible="file_type != 'sales_detail'" class="text-muted mb-2">
+                        Les noms « Vendeur » et « Caissier » (Utilisateur) de fastmag sont gardés sur chaque ligne,
+                        même s'ils ne correspondent à aucun employé. Sans carte fidélité, le client est retrouvé
+                        par son code client (Y…) grâce à la « Liste client ».
                     </div>
                     <group invisible="file_type not in ('client_new', 'client_old')" string="Clients">
                         <field name="update_existing"/>
@@ -89,6 +100,8 @@
                 <field name="state" widget="badge"/>
                 <field name="user_id" optional="show"/>
                 <field name="date_end" optional="hide"/>
+                <field name="report_file" filename="report_filename" optional="show"/>
+                <field name="report_filename" column_invisible="1"/>
             </list>
         </field>
     </record>
@@ -113,6 +126,10 @@
                         </group>
                     </group>
                     <field name="result"/>
+                    <group invisible="not report_file">
+                        <field name="report_file" filename="report_filename"/>
+                        <field name="report_filename" invisible="1"/>
+                    </group>
                 </sheet>
             </form>
         </field>
@@ -125,6 +142,49 @@
     <menuitem id="menu_yr_migration_log" name="Historique des imports fastmag"
               parent="loyalty_tier_marketing.menu_loyalty_tier_config" action="action_yr_migration_log"
               sequence="91"/>
+    <record id="yr_client_code_view_list" model="ir.ui.view">
+        <field name="name">yr.client.code.list</field>
+        <field name="model">yr.client.code</field>
+        <field name="arch" type="xml">
+            <list string="Codes clients fastmag" create="false" edit="false" decoration-muted="not card">
+                <field name="code"/>
+                <field name="card"/>
+                <field name="name"/>
+                <field name="partner_id"/>
+                <field name="date" optional="show"/>
+                <field name="points" optional="show"/>
+                <field name="category" optional="hide"/>
+            </list>
+        </field>
+    </record>
+    <record id="yr_client_code_view_search" model="ir.ui.view">
+        <field name="name">yr.client.code.search</field>
+        <field name="model">yr.client.code</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="code"/>
+                <field name="card"/>
+                <field name="name"/>
+                <field name="partner_id"/>
+                <filter name="no_card" string="Sans vraie carte" domain="[('card', '=', False)]"/>
+                <filter name="no_partner" string="Carte sans fiche client"
+                        domain="[('card', '!=', False), ('partner_id', '=', False)]"/>
+                <filter name="linked" string="Rattachés à un client" domain="[('partner_id', '!=', False)]"/>
+            </search>
+        </field>
+    </record>
+    <record id="action_yr_client_code" model="ir.actions.act_window">
+        <field name="name">Codes clients fastmag</field>
+        <field name="res_model">yr.client.code</field>
+        <field name="view_mode">list</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">Aucun code client fastmag</p>
+            <p>Importez le fichier « Liste client » (CodeClient, Cartefidelite) dans Reprise fastmag.</p>
+        </field>
+    </record>
+    <menuitem id="menu_yr_client_code" name="Codes clients fastmag (Y…)"
+              parent="loyalty_tier_marketing.menu_loyalty_tier_config" action="action_yr_client_code"
+              sequence="92"/>
     <menuitem id="menu_yr_migration_import_stock" name="Reprise fastmag (articles)"
               parent="stock.menu_stock_config_settings" action="action_yr_migration_import" sequence="90"
               groups="stock.group_stock_manager"/>

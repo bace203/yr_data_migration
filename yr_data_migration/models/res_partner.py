@@ -13,6 +13,8 @@ class ResPartner(models.Model):
     yr_gender = fields.Selection([('f', 'Femme'), ('h', 'Homme')], 'Sexe')
     yr_legacy_code = fields.Char('Code client fastmag', index=True, copy=False,
                                  help='Numéro de carte / numéro client dans fastmag.')
+    yr_client_code = fields.Char('Code client fastmag (Y…)', index=True, copy=False,
+                                 help='Code client des fichiers de ventes fastmag (ex. Y88074).')
     yr_legacy_old_code = fields.Char('Ancien code client (fastmag)', copy=False)
     yr_entry_date = fields.Date('Date d\'entrée (adhésion)')
     yr_first_purchase_legacy = fields.Date('Premier achat (fastmag)')

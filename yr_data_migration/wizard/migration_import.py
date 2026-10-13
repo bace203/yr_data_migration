@@ -18,13 +18,14 @@ from datetime import date, datetime
 from odoo import _, api, fields, models
 from odoo.modules import module as odoo_module
 from odoo.exceptions import UserError
-from odoo.tools import html_escape
+from odoo.tools import SQL, html_escape
 
 BATCH = 500
 FILE_TYPES = [
     ('article', 'Articles (fiche article fastmag)'),
     ('client_new', 'Clients 2017-2026 (CardNumbre…)'),
     ('client_old', 'Clients ancien système (numCliente…)'),
+    ('client_codes', 'Codes clients fastmag (CodeClient Y…, carte fidélité)'),
     ('client_ca', 'CA clients (2 dernières années)'),
     ('sales_detail', 'Détail des ventes (ticket, utilisateur, vendeur)'),
     ('stores', 'Liste des magasins (magasin, code)'),
@@ -32,7 +33,8 @@ FILE_TYPES = [
     ('workbook', 'Classeur à plusieurs feuilles (magasins, vendeurs…)'),
 ]
 # a workbook: its sheets are imported in this order (stores first: the other files refer to them)
-SHEET_ORDER = ['stores', 'sellers', 'article', 'client_new', 'client_old', 'client_ca', 'sales_detail']
+SHEET_ORDER = ['stores', 'sellers', 'article', 'client_new', 'client_old', 'client_codes', 'client_ca',
+               'sales_detail']
 # columns of each file (normalised header → key); the first ones identify the file
 COLUMNS = {
     'article': {
@@ -55,6 +57,10 @@ COLUMNS = {
         'cp': 'zip', 'ville': 'city', 'npai': 'npai', 'numvendeuse': 'seller', 'segment': 'segment',
         'tel2': 'phone', 'sexe': 'gender', 'dateexcel': 'entry_date',
     },
+    'client_codes': {
+        'codeclient': 'code', 'cartefidelite': 'card', 'nom': 'name', 'datecreation': 'date',
+        'fidelitepoint': 'points', 'fidelitepoints': 'points', 'categorie': 'category',
+    },
     'client_ca': {
         'cartefidelite': 'card', 'totalca': 'amount', 'codemag': 'shop', 'date': 'date', 'client': 'fm_id',
         'nom': 'lastname', 'prenom': 'firstname',
@@ -75,12 +81,14 @@ SIGNATURE = {
     'article': {'refarticle', 'eanbar'},
     'client_new': {'cardnumbre'},
     'client_old': {'numcliente'},
+    'client_codes': {'codeclient', 'cartefidelite'},
     'client_ca': {'cartefidelite', 'totalca'},
     'sales_detail': {'vente', 'utilisateur', 'vendeur'},
     'stores': {'magasin', 'code'},
     'sellers': {'vendeurs'},
 }
 STAMP_REFS = {'DTT', 'TIMBRE'}      # « droit de timbre sur ticket »: not an article
+MAX_NOTES = 100000                   # lines of the detailed report (Excel)
 
 
 class StoreIndex(dict):
@@ -214,6 +222,23 @@ def parse_birthday(value, unknown_years=()):
     return day, month, year
 
 
+def card_number(value):
+    """Loyalty card number, '' when it is not a real card (empty, 0, 000000, « numCliente »…)."""
+    value = text(value).replace(' ', '')
+    digits = re.sub(r'\D', '', value)
+    if len(digits) < 6 or not digits.strip('0'):
+        return ''
+    return value
+
+
+def client_code(value):
+    """fastmag customer code: 'Y88074', or the number alone (88074, as in the CA files) → 'Y88074'."""
+    value = text(value).replace(' ', '').upper()
+    if value.isdigit():
+        return 'Y%s' % value if value.strip('0') else ''
+    return value if re.match(r'^Y\d+$', value) else ''
+
+
 def phone(value):
     digits = re.sub(r'\D', '', text(value))
     return digits or ''
@@ -240,9 +265,10 @@ class YrMigrationImport(models.TransientModel):
                                      help='Les champs vides de la fiche sont complétés ; rien n\'est effacé.')
     # sales detail
     create_sellers = fields.Boolean(
-        'Créer les vendeurs manquants (Employés)', default=True,
-        help='Chaque vendeur du fichier devient un employé, proposé ensuite dans la liste des vendeurs en caisse. '
-             'Les utilisateurs (caissiers) sont seulement rattachés aux employés existants.')
+        'Créer les vendeurs manquants (Employés)', default=False,
+        help='Les noms « Vendeur » et « Caissier » de fastmag sont toujours gardés sur chaque ligne de vente. '
+             'Coché : chaque vendeur inconnu devient aussi un employé. Décoché : seuls les noms déjà connus '
+             '(employé ou « Nom(s) fastmag ») sont rattachés à un employé.')
     update_purchases = fields.Boolean(
         'Alimenter l\'historique d\'achats des clients', default=True,
         help='Total par carte, jour et magasin, comme le fichier « CA clients » (sans doublon avec lui) : '
@@ -439,6 +465,7 @@ class YrMigrationImport(models.TransientModel):
             raise UserError(_('Type de fichier non reconnu : choisissez-le dans la liste.'))
         previous = self._previous_log()
         resume = bool(previous) and previous.state != 'done'
+        notes = []                           # detailed report: (part, line, code, result, reason)
         log = previous if resume else self.env['yr.migration.log'].create({
             'name': self.filename or _('Fichier'), 'file_hash': self._file_hash(), 'file_type': self.file_type})
         log.write({'state': 'running', 'label': _('Démarrage'), 'user_id': self.env.uid})
@@ -446,21 +473,28 @@ class YrMigrationImport(models.TransientModel):
         self._commit()                       # the screen can follow the progress from now on
         env = self.with_context(tracking_disable=True, mail_create_nolog=True, mail_notrack=True,
                                 yr_migration_force=True, yr_resume=resume, yr_progress_clock=[0], yr_cache={},
-                                yr_report_reading=True)
+                                yr_report_reading=True, yr_notes=notes)
         if self.file_type == 'workbook':
             parts = [(sheet, kind) for sheet, kind in self._sheet_kinds()]
         else:
             sheets = [sheet for sheet, kind in self._sheet_kinds() if kind == self.file_type]
             parts = [(sheets[0] if sheets else None, self.file_type)]
         result = ''
+        summary = []
         try:
             for sheet, kind in parts:
                 stats = defaultdict(int)
                 errors = []
                 if resume:
                     stats['resumed'] = 1
-                getattr(env.with_context(yr_sheet=sheet), '_import_%s' % kind)(stats, errors)
+                title = self._part_title(kind, sheet if self.file_type == 'workbook' else None)
+                getattr(env.with_context(yr_sheet=sheet, yr_part=title), '_import_%s' % kind)(stats, errors)
                 result += self._render(stats, errors, kind, sheet if self.file_type == 'workbook' else None)
+                summary += [(title, label, stats[key]) for key, label in self._stat_labels().items()
+                            if stats.get(key)]
+                for line, code, message in errors:
+                    if len(notes) < MAX_NOTES:
+                        notes.append((title, line, code or '', _('Erreur'), message))
         except Exception:
             if self._can_commit():
                 self.env.cr.rollback()
@@ -470,14 +504,51 @@ class YrMigrationImport(models.TransientModel):
         # the progress was written beside this transaction: a fresh one sees it (no concurrent-update error)
         self._commit()
         log.invalidate_recordset()
+        report_name = 'rapport_import_%s.xlsx' % re.sub(r'\W+', '_', (self.filename or 'fastmag').rsplit('.', 1)[0])
+        result += '<p><a href="/web/content/yr.migration.log/%s/report_file/%s?download=true" class="btn btn-link ' \
+                  'p-0"><i class="fa fa-download"/> %s</a></p>' % (log.id, report_name, html_escape(
+                      _('Télécharger le rapport détaillé (Excel) : résumé et lignes non importées')))
         log.write({'state': 'done', 'result': result, 'date_end': fields.Datetime.now(), 'label': _('Terminé'),
-                   'done': max(log.done, log.total)})
+                   'done': max(log.done, log.total), 'report_filename': report_name,
+                   'report_file': base64.b64encode(self._report_xlsx(summary, notes))})
         self.write({'state': 'done', 'result': result})
         return {'type': 'ir.actions.act_window', 'name': _('Reprise fastmag'), 'res_model': self._name,
                 'res_id': self.id, 'view_mode': 'form', 'target': 'new'}
 
-    def _render(self, stats, errors, kind=None, sheet=None):
-        labels = {
+    def _note(self, line, code, result, reason):
+        """One line of the detailed report (Excel)."""
+        notes = self.env.context.get('yr_notes')
+        if notes is not None and len(notes) < MAX_NOTES:
+            notes.append((self.env.context.get('yr_part') or '', line, code or '', result, reason))
+
+    def _part_title(self, kind, sheet=None):
+        title = dict(FILE_TYPES)[kind or self.file_type]
+        return '%s — %s' % (sheet, title) if sheet else title
+
+    def _report_xlsx(self, summary, notes):
+        """Excel report of the import: summary per file / sheet, then every line ignored or in error."""
+        import openpyxl
+        workbook = openpyxl.Workbook(write_only=True)
+        sheet = workbook.create_sheet(_('Résumé'))
+        sheet.append([_('Fichier'), self.filename or ''])
+        sheet.append([_('Date'), fields.Datetime.to_string(fields.Datetime.now())])
+        sheet.append([_('Par'), self.env.user.name])
+        sheet.append([])
+        sheet.append([_('Partie'), _('Indicateur'), _('Nombre')])
+        for title, label, value in summary:
+            sheet.append([title, label, ', '.join(sorted(value)) if isinstance(value, set) else value])
+        detail = workbook.create_sheet(_('Détail'))
+        detail.append([_('Partie'), _('Ligne'), _('Code'), _('Résultat'), _('Motif')])
+        for note in notes:
+            detail.append(list(note))
+        if len(notes) >= MAX_NOTES:
+            detail.append(['', '', '', '', _('… liste limitée à %s lignes', MAX_NOTES)])
+        stream = io.BytesIO()
+        workbook.save(stream)
+        return stream.getvalue()
+
+    def _stat_labels(self):
+        return {
             'rows': _('Lignes lues'), 'created': _('Créés'), 'updated': _('Mis à jour'), 'skipped': _('Ignorés'),
             'categories': _('Catégories PdV créées'), 'suppliers': _('Fournisseurs créés'),
             'archived': _('Articles archivés'), 'unknown_cards': _('Cartes sans fiche client'),
@@ -487,10 +558,19 @@ class YrMigrationImport(models.TransientModel):
             'sellers_updated': _('Vendeurs mis à jour'), 'closed': _('Magasins fermés (archivés)'),
             'companies': _('Sociétés (filiales) créées'), 'pos': _('Points de vente (caisses) créés'),
             'already': _('Lignes déjà importées (reprise : non refaites)'),
+            'no_card': _('Clients sans vrai n° de carte fidélité (non importés)'),
+            'codes': _('Codes clients fastmag'), 'codes_no_card': _('Codes sans vraie carte (ventes anonymes)'),
+            'codes_linked': _('Codes rattachés à un client'),
+            'relinked': _('Lignes de ventes déjà importées rattachées à leur client'),
+            'via_code': _('Lignes rattachées au client par le code Y'),
+            'unmapped_code': _('Lignes avec code client sans carte connue (sans client)'),
+            'anonymous': _('Lignes sans client (anonymes)'),
+            'sellers_seen': _('Vendeurs (noms fastmag)'), 'cashiers_seen': _('Caissiers (noms fastmag)'),
         }
-        title = dict(FILE_TYPES)[kind or self.file_type]
-        if sheet:
-            title = '%s — %s' % (sheet, title)
+
+    def _render(self, stats, errors, kind=None, sheet=None):
+        labels = self._stat_labels()
+        title = self._part_title(kind, sheet)
         html = '<p><b>%s</b></p><ul>' % html_escape(title)
         for key, label in labels.items():
             if stats.get(key):
@@ -721,15 +801,30 @@ class YrMigrationImport(models.TransientModel):
         return cache['sellers'].get(' '.join(code.upper().split()), False)
 
     def _import_customers(self, kind, stats, errors):
-        items = [i for i in self._records(kind) if text(i.get('card'))]
-        stats['rows'] = len(items)
+        items = []
+        for item in self._records(kind):
+            card = card_number(item.get('card'))
+            if not card:
+                # no real loyalty card (empty, 0, 000000…): not a customer of the loyalty programme
+                stats['no_card'] += 1
+                name = ' '.join(filter(None, [text(item.get('lastname')), text(item.get('firstname'))]))
+                self._note(item['_line'], text(item.get('card')), _('Non importé'),
+                           _('pas de numéro de carte fidélité (%s)', name or _('sans nom')))
+                continue
+            item['card'] = card
+            items.append(item)
+        stats['rows'] = len(items) + stats['no_card']
         stores = self._stores()
-        existing = self._existing_customers(list({text(i['card']) for i in items}))
+        existing = self._existing_customers(list({i['card'] for i in items}))
+        codes = self.env['yr.client.code'].sudo()._codes_for({i['card'] for i in items})
         Partner = self.env['res.partner'].sudo()
         to_create, created_cards = [], set()
         for item in items:
-            card = text(item['card'])
+            card = item['card']
             vals = self._customer_vals(item, kind, stores, stats)
+            code = client_code(item.get('fm_id')) or codes.get(card)
+            if code:
+                vals['yr_client_code'] = code
             if not vals.get('birth_day'):
                 vals.pop('birth_year', None)
             partner = existing.get(card)
@@ -776,7 +871,8 @@ class YrMigrationImport(models.TransientModel):
                                _('Enregistrement des clients'))
         if to_create:
             self._create_customers(Partner, to_create, stats, errors)
-        cards = list({text(i['card']) for i in items})
+        cards = list({i['card'] for i in items})
+        self.env['yr.client.code'].sudo()._link_partners(cards)
         partner_ids = {partner.id for partner in self._existing_customers(cards).values()}
         partner_ids |= self.env['yr.legacy.purchase']._link_partners(cards)
         self._refresh_crm(partner_ids)
@@ -805,17 +901,105 @@ class YrMigrationImport(models.TransientModel):
     def _import_client_ca(self, stats, errors):
         """One fastmag purchase per card, day and store; re-importing updates the amounts."""
         visits = {}
-        for item in self._records('client_ca'):
-            card, day = text(item.get('card')), parse_date(item.get('date'))
+        items = list(self._records('client_ca'))
+        mapped = self.env['yr.client.code'].sudo()._cards_for(
+            {client_code(i.get('fm_id')) for i in items if not card_number(i.get('card'))} - {''})
+        for item in items:
+            code = client_code(item.get('fm_id'))
+            card, day = card_number(item.get('card')) or mapped.get(code, ''), parse_date(item.get('date'))
             if not card or not day:
                 if card:
                     errors.append((item['_line'], card, _('date absente ou invalide')))
+                elif day:
+                    stats['anonymous'] += 1
+                    self._note(item['_line'], code or text(item.get('card')), _('Non importé'),
+                               _('pas de numéro de carte fidélité'))
                 continue
             stats['rows'] += 1
             key = (card, datetime.combine(day, datetime.min.time()).replace(hour=12), text(item.get('shop')).upper())
-            visit = visits.setdefault(key, {'amount': 0.0, 'client': text(item.get('fm_id'))})
+            visit = visits.setdefault(key, {'amount': 0.0, 'client': code})
             visit['amount'] += number(item.get('amount')) or 0.0
         self._save_purchases(visits, stats, errors)
+
+    # ── fastmag customer codes: Y… ↔ card ───────────────────────────────
+    def _import_client_codes(self, stats, errors):
+        """« Liste client » file: the code of the sales files (Y88074) and its loyalty card.
+
+        Only a real card links the code to a customer; the others are kept (their sales stay anonymous).
+        The sales imported before this file are attached to their customer now.
+        """
+        Code = self.env['yr.client.code'].sudo()
+        items = {}
+        for item in self._records('client_codes'):
+            code = client_code(item.get('code'))
+            if not code:
+                if any(text(v) for k, v in item.items() if k != '_line'):
+                    errors.append((item['_line'], text(item.get('code')), _('code client absent ou invalide')))
+                continue
+            stats['rows'] += 1
+            card = card_number(item.get('card'))
+            if not card:
+                stats['codes_no_card'] += 1
+                self._note(item['_line'], code, _('Gardé sans client'),
+                           _('pas de vrai numéro de carte (%s) : ses ventes restent anonymes',
+                             text(item.get('card')) or _('vide')))
+            items[code] = {
+                'code': code, 'card': card or False, 'name': text(item.get('name')) or False,
+                'date': parse_date(item.get('date')), 'points': number(item.get('points')) or 0.0,
+                'category': text(item.get('category')) or False, '_line': item['_line'],
+            }
+        stats['codes'] = len(items)
+        existing = {}
+        codes = list(items)
+        for start in range(0, len(codes), 20000):
+            for record in Code.search([('code', 'in', codes[start:start + 20000])]):
+                existing[record.code] = record
+        to_create, done = [], 0
+        for code, vals in items.items():
+            vals.pop('_line')
+            record = existing.get(code)
+            if record:
+                changes = {k: v for k, v in vals.items() if (record[k] or False) != (v or False)}
+                if changes:
+                    record.write(changes)
+                    stats['updated'] += 1
+            else:
+                to_create.append(vals)
+            if len(to_create) >= 5000:
+                stats['created'] += len(Code.create(to_create))
+                to_create = []
+                self._commit()
+            done += 1
+            self._progress(done, len(items), _('Enregistrement des codes clients'))
+        if to_create:
+            stats['created'] += len(Code.create(to_create))
+        cards = [vals['card'] for vals in items.values() if vals['card']]
+        Code._link_partners(cards)
+        stats['codes_linked'] = Code.search_count([('code', 'in', codes), ('partner_id', '!=', False)]) \
+            if len(codes) < 50000 else len(Code._codes_for(cards))
+        # sales imported before: anonymous lines carrying a code with a card now
+        SaleLine = self.env['yr.legacy.sale.line'].sudo()
+        SaleLine.flush_model()
+        self.env.cr.execute(SQL("""
+            UPDATE yr_legacy_sale_line l SET card = c.card
+              FROM yr_client_code c
+             WHERE l.card IS NULL AND l.legacy_client_id = c.code AND c.card IS NOT NULL AND c.code = ANY(%s)
+         RETURNING l.card
+        """, codes))
+        relinked = [card for (card,) in self.env.cr.fetchall()]
+        SaleLine.invalidate_model(['card'])
+        if relinked:
+            stats['relinked'] = len(relinked)
+            cards = list(set(relinked))
+            SaleLine._link_partners(cards)
+            self.env.cr.execute(SQL("""
+                SELECT card, date, shop_code, sum(amount), min(legacy_client_id)
+                  FROM yr_legacy_sale_line WHERE card = ANY(%s) GROUP BY card, date, shop_code
+            """, cards))
+            visits = {(card, datetime.combine(day, datetime.min.time()).replace(hour=12), shop):
+                      {'amount': amount or 0.0, 'client': client}
+                      for card, day, shop, amount, client in self.env.cr.fetchall()}
+            self._save_purchases(visits, stats, errors, created='purchases', updated='purchases')
 
     def _save_purchases(self, visits, stats, errors, created='created', updated='updated', stores=None):
         """visits: {(card, datetime at noon, shop): {'amount', 'client'}} → yr.legacy.purchase (upsert)."""
@@ -1138,6 +1322,9 @@ class YrMigrationImport(models.TransientModel):
                 stats['employees'] += 1
             return employees.get(key, Employee).id or False
 
+        mapped = self.env['yr.client.code'].sudo()._cards_for(
+            {client_code(i.get('fm_id')) for i in items if not card_number(i.get('card'))} - {''})
+        unmapped, sellers_seen, cashiers_seen, unknown_refs = defaultdict(int), set(), set(), defaultdict(int)
         visits, to_create, cards = {}, [], set()
         done = 0
         for item in items:
@@ -1145,15 +1332,27 @@ class YrMigrationImport(models.TransientModel):
             if not store:
                 stats['stores_missing'] = stats.get('stores_missing') or set()
                 stats['stores_missing'].add(item['shop'])
-            # no « carte fidélité » column: the client code (Y88074) is the card / customer code
-            card = text(item.get('card')) if 'card' in item else text(item.get('fm_id'))
-            card = '' if card in ('0', '') else card
+            # the card of the file, else the card of the fastmag customer code (Y88074 / 88074)
+            code = client_code(item.get('fm_id'))
+            card = card_number(item.get('card'))
+            if not card and code:
+                card = mapped.get(code, '')
+                if card:
+                    stats['via_code'] += 1
+                else:
+                    stats['unmapped_code'] += 1
+                    unmapped[code] += 1
+            elif not card:
+                stats['anonymous'] += 1
             ref, ean = text(item.get('ref')), text(item.get('ean'))
             product = False if item['stamp'] else products.get(('ref', ref)) or products.get(('ean', ean))
             if not item['stamp'] and not product:
                 stats['unknown_products'] += 1
+                unknown_refs[ref or ean] += 1
             total = number(item.get('total')) or 0.0
             cashier, seller = text(item.get('cashier')), text(item.get('seller'))
+            sellers_seen.add(seller.upper())
+            cashiers_seen.add(cashier.upper())
             vals = {
                 'shop_code': item['shop'], 'store_id': store.id if store else False,
                 'pos_config_id': store.pos_config_ids[:1].id if store else False,
@@ -1161,7 +1360,7 @@ class YrMigrationImport(models.TransientModel):
                 'ticket': item['ticket'], 'sequence': item['sequence'], 'date': item['day'],
                 'cashier_name': cashier or False, 'cashier_id': employee(cashier, False, store),
                 'seller_name': seller or False, 'seller_id': employee(seller, self.create_sellers, store),
-                'card': card or False, 'legacy_client_id': text(item.get('fm_id')) if card else False,
+                'card': card or False, 'legacy_client_id': code or False,
                 'product_ref': ref or False, 'barcode': ean or False, 'product_id': product.id if product else False,
                 'name': text(item.get('name')) or False, 'axe': text(item.get('axe')) or False,
                 'product_line': text(item.get('line')) or False, 'is_stamp': item['stamp'],
@@ -1180,7 +1379,7 @@ class YrMigrationImport(models.TransientModel):
             if card:
                 cards.add(card)
                 key = (card, datetime.combine(item['day'], datetime.min.time()).replace(hour=12), item['shop'])
-                visit = visits.setdefault(key, {'amount': 0.0, 'client': text(item.get('fm_id'))})
+                visit = visits.setdefault(key, {'amount': 0.0, 'client': code})
                 visit['amount'] += total
             if len(to_create) >= 5000:
                 stats['created'] += len(SaleLine.create(to_create))
@@ -1190,6 +1389,16 @@ class YrMigrationImport(models.TransientModel):
             self._progress(done, len(items), _('Enregistrement des ventes'))
         if to_create:
             stats['created'] += len(SaleLine.create(to_create))
+        stats['sellers_seen'] = len(sellers_seen - {''})
+        stats['cashiers_seen'] = len(cashiers_seen - {''})
+        for code, count in sorted(unmapped.items()):
+            self._note('-', code, _('Vente sans client'), _(
+                '%s ligne(s) : code client sans carte connue (importez la « Liste client » : elles seront '
+                'rattachées)', count))
+        for ref, count in sorted(unknown_refs.items()):
+            self._note('-', ref, _('Article inconnu'), _('%s ligne(s) gardée(s) sans article', count))
+        for shop in sorted(stats.get('stores_missing') or ()):
+            self._note('-', shop, _('Magasin inconnu'), _('ventes gardées sans magasin'))
         SaleLine._link_partners(list(cards))
         if visits and self.update_purchases:
             self._save_purchases(visits, stats, errors, created='purchases', updated='purchases', stores=stores)

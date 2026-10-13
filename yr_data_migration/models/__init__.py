@@ -8,4 +8,5 @@ from . import loyalty_store
 from . import legacy_purchase
 from . import legacy_sale
 from . import migration_log
+from . import client_code
 from . import res_config_settings
