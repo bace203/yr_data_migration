@@ -1115,7 +1115,8 @@ class YrMigrationImport(models.TransientModel):
                         continue
                     # the former code stays known for the files that still use it
                     vals['code'] = code
-                    aliases.append(store.code)
+                    if store.code and store.code.upper() not in [x.upper() for x in aliases]:
+                        aliases.append(store.code)
                 if fastmag and fastmag not in [a.upper() for a in aliases]:
                     aliases.append(fastmag)                     # « YR_CARR » of the sales files
                 if ','.join(aliases) != (store.yr_fastmag_code or ''):
