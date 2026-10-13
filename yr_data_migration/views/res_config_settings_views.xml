@@ -6,12 +6,53 @@
         <field name="inherit_id" ref="loyalty_tier_marketing.res_config_settings_view_loyalty"/>
         <field name="arch" type="xml">
             <xpath expr="//app[@name='loyalty_tier_marketing']" position="inside">
-                <block title="Reprise fastmag" groups="base.group_system">
-                    <setting string="Supprimer les clients et ventes importés"
-                             help="Pour réimporter les fichiers clients et ventes depuis zéro. Les magasins, vendeurs et articles sont gardés ; un client déjà utilisé ailleurs (ticket, facture…) est archivé.">
-                        <button name="action_yr_delete_imported" type="object" string="Supprimer les données importées"
+                <block title="Reprise fastmag : commandes du point de vente" groups="base.group_system">
+                    <setting string="Ventes fastmag → Point de Vente › Commandes"
+                             help="Chaque ticket importé devient une commande du point de vente du magasin (session « historique fastmag » fermée, sans paiement, écriture comptable ni mouvement de stock). Rattache aussi les lignes aux magasins et articles ajoutés depuis l'import.">
+                        <div class="text-muted">
+                            <field name="yr_fastmag_order_count" class="fw-bold"/> commandes créées,
+                            <field name="yr_sales_without_order" class="fw-bold"/> lignes de ventes sans commande
+                        </div>
+                        <button name="action_yr_make_pos_orders" type="object" string="Créer les commandes PdV"
+                                class="btn-primary mt-2" icon="fa-cogs"/>
+                    </setting>
+                </block>
+                <block title="Reprise fastmag : supprimer les données importées" groups="base.group_system">
+                    <setting string="Clients seulement"
+                             help="Clients importés supprimés (archivés s'ils sont utilisés ailleurs). Leurs ventes et historique sont gardés et retrouvent le client au prochain import.">
+                        <button name="action_yr_delete_customers" type="object" string="Supprimer les clients"
+                                class="btn-secondary" icon="fa-trash"
+                                confirm="Supprimer tous les clients importés de fastmag ?"/>
+                    </setting>
+                    <setting string="Ventes seulement"
+                             help="Lignes de ventes importées et leurs commandes du point de vente. Les clients sont gardés.">
+                        <button name="action_yr_delete_sales" type="object" string="Supprimer les ventes"
+                                class="btn-secondary" icon="fa-trash"
+                                confirm="Supprimer toutes les ventes importées de fastmag et leurs commandes PdV ?"/>
+                    </setting>
+                    <setting string="Commandes PdV seulement"
+                             help="Commandes du point de vente faites depuis fastmag. Les lignes de ventes sont gardées : « Créer les commandes PdV » les refait.">
+                        <button name="action_yr_delete_pos_orders" type="object" string="Supprimer les commandes PdV"
+                                class="btn-secondary" icon="fa-trash"
+                                confirm="Supprimer les commandes du point de vente créées depuis fastmag ?"/>
+                    </setting>
+                    <setting string="Historique CA clients seulement"
+                             help="Achats du fichier « CA clients » (et totaux par jour des ventes).">
+                        <button name="action_yr_delete_purchases" type="object" string="Supprimer l'historique CA"
+                                class="btn-secondary" icon="fa-trash"
+                                confirm="Supprimer l'historique d'achats fastmag des clients ?"/>
+                    </setting>
+                    <setting string="Codes clients (Y…) seulement"
+                             help="Table « Liste client » : code client fastmag ↔ carte fidélité.">
+                        <button name="action_yr_delete_codes" type="object" string="Supprimer les codes clients"
+                                class="btn-secondary" icon="fa-trash"
+                                confirm="Supprimer les codes clients fastmag ?"/>
+                    </setting>
+                    <setting string="Tout"
+                             help="Clients, ventes, commandes PdV, historique CA et codes clients. Les magasins, vendeurs et articles sont gardés.">
+                        <button name="action_yr_delete_imported" type="object" string="Tout supprimer"
                                 class="btn-danger" icon="fa-trash"
-                                confirm="Supprimer tous les clients et toutes les ventes importés de fastmag ? Cette action est définitive."/>
+                                confirm="Supprimer TOUTES les données importées de fastmag (clients, ventes, commandes PdV, historique, codes) ? Cette action est définitive."/>
                     </setting>
                 </block>
             </xpath>

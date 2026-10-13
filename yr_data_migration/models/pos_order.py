@@ -28,3 +28,33 @@ class PosOrder(models.Model):
 
     def write(self, vals):
         return super().write(self._yr_seller_vals(dict(vals)))
+
+    # tickets of the fastmag history (« Détail des ventes »): real orders of a closed « historique » session,
+    # without payment, accounting entry nor stock move
+    yr_fastmag_ticket = fields.Char('Ticket fastmag', index='btree_not_null', copy=False,
+                                    help='Magasin fastmag / n° de vente du ticket importé.')
+    yr_fastmag_card = fields.Char('Carte fidélité (fastmag)', copy=False)
+    yr_seller_name = fields.Char('Vendeur (fastmag)', copy=False)
+    yr_cashier_name = fields.Char('Caissier (fastmag)', copy=False)
+
+    def init(self):
+        super().init()
+        # the CRM history (yr.legacy.purchase) skips the days already present as fastmag tickets
+        self.env.cr.execute("""
+            CREATE INDEX IF NOT EXISTS pos_order_yr_fastmag_card_date_idx
+                ON pos_order (yr_fastmag_card, date_order) WHERE yr_fastmag_card IS NOT NULL
+        """)
+
+
+class PosOrderLine(models.Model):
+    _inherit = 'pos.order.line'
+
+    yr_fastmag_line_id = fields.Many2one('yr.legacy.sale.line', 'Ligne fastmag', index='btree_not_null',
+                                         ondelete='set null', copy=False)
+
+
+class PosSession(models.Model):
+    _inherit = 'pos.session'
+
+    yr_fastmag = fields.Boolean('Historique fastmag', copy=False, index=True,
+                                help='Session fermée qui contient les tickets importés de fastmag.')

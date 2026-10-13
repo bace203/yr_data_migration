@@ -31,6 +31,7 @@
                         <field name="archive_inactive"/>
                     </group>
                     <group invisible="file_type != 'sales_detail'" string="Détail des ventes">
+                        <field name="create_pos_orders"/>
                         <field name="create_sellers"/>
                         <field name="update_purchases"/>
                     </group>

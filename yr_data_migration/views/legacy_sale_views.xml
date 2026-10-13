@@ -21,6 +21,7 @@
                 <field name="partner_id" optional="show"/>
                 <field name="card" optional="hide"/>
                 <field name="legacy_client_id" optional="hide"/>
+                <field name="pos_order_id" optional="show"/>
                 <field name="product_id" optional="show"/>
                 <field name="name" optional="show"/>
                 <field name="axe" optional="hide"/>
@@ -72,6 +73,7 @@
                 <field name="store_id"/>
                 <filter name="articles" string="Articles (sans timbre)" domain="[('is_stamp', '=', False)]"/>
                 <filter name="identified" string="Clients identifiés" domain="[('card', '!=', False)]"/>
+                <filter name="no_pos_order" string="Sans commande PdV" domain="[('pos_order_id', '=', False)]"/>
                 <filter name="code_no_card" string="Code client sans carte"
                         domain="[('card', '=', False), ('legacy_client_id', '!=', False)]"/>
                 <filter name="gifts" string="Offerts / remisés" domain="[('discount', '>', 0)]"/>

@@ -1,8 +1,20 @@
 # -*- coding: utf-8 -*-
 """fastmag sales detail (« Détail ventes » file): one line per ticket line, with the cashier (Utilisateur) and the
 seller (Vendeur). The totals per customer, day and store also feed the purchase history (yr.legacy.purchase)."""
+import logging
+import re
+import time
+from collections import defaultdict
+from datetime import datetime, time as dtime
+
 from odoo import _, api, fields, models
+from odoo.modules import module as odoo_module
 from odoo.tools import SQL
+
+_logger = logging.getLogger(__name__)
+UNKNOWN_PRODUCT_CODE = 'FASTMAG-INCONNU'
+STAMP_PRODUCT_CODES = ('DTT', 'TIMBRE', 'FASTMAG-DTT')
+POS_BATCH = 1000                       # tickets per batch (commit between batches)
 
 
 def name_key(value):
@@ -43,6 +55,8 @@ class YrLegacySaleLine(models.Model):
     amount = fields.Float('Total TTC', digits='Product Price')
     reason = fields.Char('Motif')
     comment = fields.Char('Commentaire')
+    pos_order_id = fields.Many2one('pos.order', 'Commande PdV', index='btree_not_null', ondelete='set null',
+                                   copy=False, help='Commande du point de vente créée pour ce ticket.')
 
     _sql_constraints = [('line_unique', 'unique(shop_code, ticket, sequence)',
                          'Une seule ligne par magasin, ticket et n° de ligne.')]
@@ -59,6 +73,16 @@ class YrLegacySaleLine(models.Model):
                AND l.partner_id IS DISTINCT FROM p.id AND %s
         """, where))
         self.invalidate_model(['partner_id'])
+        # the POS orders already made from these tickets follow (customer found later, by its card or code Y)
+        self.env['pos.order'].flush_model(['partner_id', 'yr_fastmag_card'])
+        self.env.cr.execute(SQL("""
+            UPDATE pos_order o SET partner_id = l.partner_id, yr_fastmag_card = l.card
+              FROM yr_legacy_sale_line l
+             WHERE l.pos_order_id = o.id AND l.card IS NOT NULL
+               AND (o.partner_id IS DISTINCT FROM l.partner_id OR o.yr_fastmag_card IS DISTINCT FROM l.card)
+               AND %s
+        """, where))
+        self.env['pos.order'].invalidate_model(['partner_id', 'yr_fastmag_card'])
 
     @api.model
     def _employee_index(self):
@@ -97,3 +121,229 @@ class YrLegacySaleLine(models.Model):
                                   'des employés.'),
                        'next': {'type': 'ir.actions.client', 'tag': 'soft_reload'}},
         }
+
+    # ── fastmag tickets → Point de Vente orders ──────────────────────────
+    @api.model
+    def _yr_can_commit(self):
+        return not odoo_module.current_test and not self.env.registry.in_test_mode()
+
+    @api.model
+    def _yr_link_stores_products(self):
+        """Lines imported before their store or article existed: attached now (store codes, articles)."""
+        self.flush_model()
+        cr = self.env.cr
+        stores = self.env['yr.migration.import']._stores()
+        linked = {'stores': 0, 'products': 0}
+        cr.execute('SELECT DISTINCT shop_code FROM yr_legacy_sale_line WHERE store_id IS NULL')
+        for (shop,) in cr.fetchall():
+            store = stores.get(shop)
+            if store:
+                config = store.pos_config_ids[:1]
+                cr.execute(SQL("""
+                    UPDATE yr_legacy_sale_line SET store_id = %s, company_id = %s, pos_config_id = %s
+                     WHERE store_id IS NULL AND shop_code = %s
+                """, store.id, store.company_id.id, config.id or None, shop))
+                linked['stores'] += cr.rowcount
+        for column in ('default_code', 'barcode'):
+            source = 'product_ref' if column == 'default_code' else 'barcode'
+            cr.execute(SQL("""
+                UPDATE yr_legacy_sale_line l SET product_id = pp.id
+                  FROM product_product pp
+                 WHERE l.product_id IS NULL AND NOT COALESCE(l.is_stamp, FALSE) AND l.%s IS NOT NULL
+                   AND pp.%s = l.%s
+            """, SQL.identifier(source), SQL.identifier(column), SQL.identifier(source)))
+            linked['products'] += cr.rowcount
+        # orders already made with the « article non retrouvé » get the real article
+        cr.execute("""
+            UPDATE pos_order_line pl SET product_id = l.product_id
+              FROM yr_legacy_sale_line l
+             WHERE pl.yr_fastmag_line_id = l.id AND l.product_id IS NOT NULL AND pl.product_id <> l.product_id
+        """)
+        self.invalidate_model()
+        self.env['pos.order.line'].invalidate_model(['product_id'])
+        return linked
+
+    @api.model
+    def _yr_special_products(self):
+        """« Article fastmag non retrouvé » and the stamp duty: lines of tickets whose article is unknown."""
+        Product = self.env['product.product'].sudo().with_context(active_test=False)
+        unknown = Product.search([('default_code', '=', UNKNOWN_PRODUCT_CODE)], limit=1) or Product.create({
+            'name': _('Article fastmag (non retrouvé)'), 'default_code': UNKNOWN_PRODUCT_CODE, 'type': 'service',
+            'sale_ok': False, 'available_in_pos': False, 'list_price': 0.0, 'taxes_id': [(5, 0, 0)],
+            'company_id': False})
+        stamp = Product.search([('default_code', 'in', STAMP_PRODUCT_CODES)], limit=1) or Product.create({
+            'name': _('Droit de timbre (fastmag)'), 'default_code': 'FASTMAG-DTT', 'type': 'service',
+            'sale_ok': False, 'available_in_pos': False, 'list_price': 0.0, 'taxes_id': [(5, 0, 0)],
+            'company_id': False})
+        return unknown, stamp
+
+    @api.model
+    def _yr_history_session(self, store, cache):
+        """Closed « historique fastmag » session of the store's till (an archived till for a closed store)."""
+        if store.id in cache:
+            return cache[store.id]
+        Config = self.env['pos.config'].sudo().with_context(active_test=False)
+        config = Config.search([('crm_store_id', '=', store.id)], order='active desc, id', limit=1)
+        if not config:
+            company = store.company_id
+            Warehouse = self.env['stock.warehouse'].sudo().with_company(company)
+            if not Warehouse.search([('company_id', '=', company.id)], limit=1):
+                # a closed store's company may have none: the till needs one (no stock is moved)
+                code = re.sub(r'[^A-Z0-9]', '', (store.name or '').upper())[:5] or 'MAG'
+                Warehouse.create({'name': store.name, 'code': code, 'company_id': company.id})
+            config = Config.with_company(company).create({
+                'name': _('%s (historique fastmag)', store.name), 'company_id': company.id,
+                'crm_store_id': store.id, 'active': False,
+                'payment_method_ids': [(6, 0, [])]})              # history: no payment
+        Session = self.env['pos.session'].sudo()
+        session = Session.search([('config_id', '=', config.id), ('yr_fastmag', '=', True)], limit=1)
+        if not session:
+            session = Session.with_company(config.company_id).with_context(onboarding_creation=True).create(
+                {'config_id': config.id})
+            session.write({'state': 'closed', 'stop_at': fields.Datetime.now(), 'yr_fastmag': True,
+                           'name': '%s/FASTMAG-%s' % (config.name, config.id)})
+        cache[store.id] = session
+        return session
+
+    @api.model
+    def _yr_make_pos_orders(self, max_tickets=POS_BATCH):
+        """Next tickets of the imported sales → Point de Vente orders (state « Comptabilisé », no payment,
+        accounting entry nor stock move). Returns (orders created, more tickets left)."""
+        self.flush_model()
+        cr = self.env.cr
+        # the history session of each store concerned (a store whose till cannot be made is skipped, logged)
+        cr.execute('SELECT DISTINCT store_id FROM yr_legacy_sale_line WHERE pos_order_id IS NULL AND store_id IS NOT NULL')
+        sessions, ready = {}, []
+        for store in self.env['loyalty.store'].sudo().with_context(active_test=False).browse(
+                [row[0] for row in cr.fetchall()]):
+            try:
+                with cr.savepoint():
+                    self._yr_history_session(store, sessions)
+                ready.append(store.id)
+            except Exception as error:  # noqa: BLE001 - the other stores go on
+                sessions.pop(store.id, None)
+                _logger.warning('fastmag: pas de commandes PdV pour le magasin %s : %s', store.name, error)
+        if not ready:
+            return 0, False
+        cr.execute(SQL("""
+            SELECT shop_code, ticket FROM yr_legacy_sale_line
+             WHERE pos_order_id IS NULL AND store_id = ANY(%s)
+             GROUP BY shop_code, ticket ORDER BY min(date), shop_code, ticket LIMIT %s
+        """, ready, max_tickets))
+        keys = set(cr.fetchall())
+        if not keys:
+            return 0, False
+        cr.execute(SQL("""
+            SELECT id, shop_code, ticket, sequence, date, store_id, partner_id, card, seller_id, seller_name,
+                   cashier_id, cashier_name, product_id, is_stamp, name, product_ref, qty, price_unit, discount,
+                   amount
+              FROM yr_legacy_sale_line
+             WHERE pos_order_id IS NULL AND store_id IS NOT NULL AND ticket = ANY(%s) AND shop_code = ANY(%s)
+             ORDER BY shop_code, ticket, sequence, id
+        """, list({t for _s, t in keys}), list({s for s, _t in keys})))
+        tickets = defaultdict(list)
+        for row in cr.dictfetchall():
+            if (row['shop_code'], row['ticket']) in keys:
+                tickets[(row['shop_code'], row['ticket'])].append(row)
+        unknown, stamp = self._yr_special_products()
+        stores = {store.id: store for store in self.env['loyalty.store'].sudo().with_context(active_test=False)
+                  .browse({rows[0]['store_id'] for rows in tickets.values()})}
+        has_employee = 'employee_id' in self.env['pos.order']._fields
+        vals_list, partner_ids = [], set()
+        for number, ((shop, ticket), rows) in enumerate(sorted(tickets.items()), start=1):
+            store = stores[rows[0]['store_id']]
+            session = sessions[store.id]
+            first = rows[0]
+            partner = next((r['partner_id'] for r in rows if r['partner_id']), False)
+            card = next((r['card'] for r in rows if r['card']), False)
+            seller = next((r['seller_id'] for r in rows if r['seller_id']), False)
+            cashier = next((r['cashier_id'] for r in rows if r['cashier_id']), False)
+            total = sum(r['amount'] or 0.0 for r in rows)
+            key = '%s/%s' % (shop, ticket)
+            vals = {
+                'session_id': session.id, 'name': key, 'pos_reference': _('fastmag %s', key),
+                'date_order': datetime.combine(first['date'], dtime(12, 0)), 'partner_id': partner,
+                'state': 'done', 'user_id': False, 'sequence_number': number,
+                'amount_total': total, 'amount_tax': 0.0, 'amount_paid': total, 'amount_return': 0.0,
+                'yr_fastmag_ticket': key, 'yr_fastmag_card': card, 'yr_seller_id': seller,
+                'yr_seller_name': first['seller_name'], 'yr_cashier_name': first['cashier_name'],
+                'lines': [(0, 0, {
+                    'name': '%s/%s' % (key, r['sequence']),
+                    'product_id': r['product_id'] or (stamp.id if r['is_stamp'] else unknown.id),
+                    'full_product_name': r['name'] or r['product_ref'] or (stamp if r['is_stamp'] else unknown).name,
+                    'qty': r['qty'] or 0.0, 'price_unit': r['price_unit'] or 0.0, 'discount': r['discount'] or 0.0,
+                    'price_subtotal': r['amount'] or 0.0, 'price_subtotal_incl': r['amount'] or 0.0,
+                    'tax_ids': [(6, 0, [])], 'yr_fastmag_line_id': r['id'],
+                }) for r in rows],
+            }
+            if has_employee:
+                vals['employee_id'] = cashier
+            vals_list.append(vals)
+            if partner:
+                partner_ids.add(partner)
+        orders = self.env['pos.order'].sudo().with_context(
+            tracking_disable=True, mail_create_nolog=True, mail_notrack=True).create(vals_list)
+        self.env['pos.order.line'].flush_model()
+        cr.execute(SQL("""
+            UPDATE yr_legacy_sale_line l SET pos_order_id = pl.order_id
+              FROM pos_order_line pl
+             WHERE pl.yr_fastmag_line_id = l.id AND pl.order_id = ANY(%s)
+        """, orders.ids))
+        self.invalidate_model(['pos_order_id'])
+        if partner_ids:
+            self.env['loyalty.crm.engine'].sudo().refresh_partners(list(partner_ids))
+        cr.execute(SQL('SELECT 1 FROM yr_legacy_sale_line WHERE pos_order_id IS NULL AND store_id = ANY(%s) LIMIT 1',
+                       ready))
+        return len(orders), bool(cr.fetchone())
+
+    @api.model
+    def _cron_yr_pos_orders(self):
+        """Background job: the imported tickets become POS orders, by batches (resumes where it stopped)."""
+        start = time.monotonic()
+        while True:
+            _count, more = self._yr_make_pos_orders()
+            if self._yr_can_commit():
+                self.env.cr.commit()
+            if not more:
+                return
+            if time.monotonic() - start > 240:
+                self.env.ref('yr_data_migration.ir_cron_yr_fastmag_pos_orders')._trigger()
+                return
+
+    @api.model
+    def _yr_trigger_pos_orders(self):
+        cron = self.env.ref('yr_data_migration.ir_cron_yr_fastmag_pos_orders', raise_if_not_found=False)
+        if cron:
+            cron.sudo()._trigger()
+
+    @api.model
+    def _yr_delete_pos_orders(self, tickets=None):
+        """Removes the POS orders made from fastmag tickets (all, or those of the given « shop/ticket » keys):
+        they are made again from the imported lines."""
+        cr = self.env.cr
+        self.env['pos.order'].flush_model()
+        count = 0
+        while True:
+            if tickets is None:
+                cr.execute('SELECT id FROM pos_order WHERE yr_fastmag_ticket IS NOT NULL LIMIT 20000')
+            else:
+                cr.execute(SQL('SELECT id FROM pos_order WHERE yr_fastmag_ticket = ANY(%s)', list(tickets)))
+            ids = [row[0] for row in cr.fetchall()]
+            if not ids:
+                break
+            cr.execute(SQL('UPDATE yr_legacy_sale_line SET pos_order_id = NULL WHERE pos_order_id = ANY(%s)', ids))
+            cr.execute(SQL('DELETE FROM pos_order WHERE id = ANY(%s)', ids))
+            count += len(ids)
+            if tickets is not None:
+                break
+            if self._yr_can_commit():
+                cr.commit()
+        if tickets is None:
+            cr.execute("""
+                DELETE FROM pos_session s WHERE s.yr_fastmag
+                   AND NOT EXISTS (SELECT 1 FROM pos_order o WHERE o.session_id = s.id)
+            """)
+        self.env['pos.order'].invalidate_model()
+        self.env['pos.order.line'].invalidate_model()
+        self.invalidate_model(['pos_order_id'])
+        return count

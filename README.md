@@ -56,3 +56,19 @@ fastmag (données fictives) : articles (axes, fournisseurs, doublons de code-bar
 des deux fichiers (dates de naissance, téléphones, magasins, montant figé, réimport), historique d'achats et
 statut client, liste des magasins (avec / sans en-tête), détail des ventes (caissier, vendeur, articles,
 timbre, historique client, réimport, rattachement des employés), vendeur des commandes de caisse, fichier non reconnu.
+
+## Commandes du point de vente (historique fastmag)
+
+Chaque ticket du « Détail des ventes » devient une **commande de Point de Vente › Commandes** (état
+« Comptabilisé ») dans une session fermée « historique fastmag » de la caisse du magasin (caisse archivée pour un
+magasin fermé). Pas de paiement, d'écriture comptable ni de mouvement de stock : c'est de l'historique. Les
+commandes sont créées **en arrière-plan** après l'import (tâche planifiée « Reprise fastmag : commandes du point de
+vente », par lots, reprise automatique). Le client, le vendeur et le caissier fastmag sont repris ; un article
+inconnu devient « Article fastmag (non retrouvé) » jusqu'à l'import de l'article. Le tableau de bord Fidélité &
+CRM ne compte pas deux fois un jour déjà présent en commandes.
+
+Paramètres › Fidélité & CRM :
+* **Créer les commandes PdV** : rattache les lignes aux magasins et articles ajoutés depuis l'import, puis crée
+  les commandes manquantes.
+* **Supprimer** : clients seulement, ventes seulement (lignes + commandes), commandes PdV seulement, historique
+  CA seulement, codes clients seulement, ou tout. Magasins, vendeurs et articles sont toujours gardés.

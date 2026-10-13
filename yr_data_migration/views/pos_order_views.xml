@@ -8,6 +8,10 @@
             <field name="user_id" position="after">
                 <field name="yr_seller_id" readonly="0" options="{'no_create': True}"/>
                 <field name="yr_seller_code_legacy" invisible="not yr_seller_code_legacy"/>
+                <field name="yr_fastmag_ticket" invisible="not yr_fastmag_ticket"/>
+                <field name="yr_seller_name" invisible="not yr_seller_name"/>
+                <field name="yr_cashier_name" invisible="not yr_cashier_name"/>
+                <field name="yr_fastmag_card" invisible="not yr_fastmag_card"/>
             </field>
         </field>
     </record>
@@ -19,6 +23,8 @@
             <!-- at the end: the list may have been changed by other modules (no cashier column) -->
             <xpath expr="//list" position="inside">
                 <field name="yr_seller_id" optional="show"/>
+                <field name="yr_seller_name" optional="show"/>
+                <field name="yr_cashier_name" optional="show"/>
             </xpath>
         </field>
     </record>
@@ -29,7 +35,15 @@
         <field name="arch" type="xml">
             <xpath expr="//search" position="inside">
                 <field name="yr_seller_id"/>
+                <field name="yr_seller_name"/>
+                <field name="yr_cashier_name"/>
+                <field name="yr_fastmag_ticket"/>
+                <filter name="yr_fastmag" string="Historique fastmag" domain="[('yr_fastmag_ticket', '!=', False)]"/>
+                <filter name="yr_not_fastmag" string="Ventes Posify" domain="[('yr_fastmag_ticket', '=', False)]"/>
                 <filter name="yr_by_seller" string="Vendeur" context="{'group_by': 'yr_seller_id'}"/>
+                <filter name="yr_by_seller_name" string="Vendeur (fastmag)" context="{'group_by': 'yr_seller_name'}"/>
+                <filter name="yr_by_cashier_name" string="Caissier (fastmag)"
+                        context="{'group_by': 'yr_cashier_name'}"/>
             </xpath>
         </field>
     </record>

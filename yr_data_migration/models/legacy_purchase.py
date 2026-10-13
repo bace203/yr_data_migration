@@ -69,6 +69,10 @@ class LoyaltyCrmOrder(models.Model):
                    1 AS nb_order
               FROM yr_legacy_purchase l
              WHERE l.partner_id IS NOT NULL
+               -- the same day is already there as fastmag tickets (POS orders): not counted twice
+               AND NOT EXISTS (SELECT 1 FROM pos_order o
+                                WHERE o.yr_fastmag_card = l.card AND o.date_order = l.date
+                                  AND split_part(o.yr_fastmag_ticket, '/', 1) = COALESCE(l.shop_code, ''))
         """
 
 

@@ -585,6 +585,70 @@ class TestMigrationImport(TransactionCase):
         Line._link_employees()
         self.assertEqual(slimeni.seller_id, employee)
 
+    def test_sales_become_pos_orders(self):
+        """Each imported ticket becomes a POS order of a closed « historique fastmag » session; the CRM counts it
+        once; re-import, delete buttons."""
+        product = self.env['product.product'].create({'name': 'Crayon PdV test', 'default_code': '900106199',
+                                                      'barcode': '3660009567499', 'list_price': 23})
+        self._import([NEW_HEADER, self._new_row(9940133199, 'POS', 'CLIENTE', datetime(1990, 1, 2))])
+        wael = self.env['res.partner'].search([('customer_code', '=', '9940133199')])
+        day = datetime.combine(date.today() - timedelta(days=5), datetime.min.time())
+        rows = [DETAIL_HEADER,
+                self._detail(8199659, day, 'RIM', 'JBELI POS', None, 900106199, 3660009567499, 'CRAYON', 1, 23, 0, 23),
+                self._detail(8199659, day, 'RIM', 'JBELI POS', None, 'DTT', 75229, 'DROIT DE TIMBRE', 1, 0.1, 0, 0.1),
+                self._detail(8199667, day, 'RIM', 'SLIMENI POS', 9940133199, 'X1', 3660009567499, 'CRAYON', 2, 23, 0,
+                             46),
+                self._detail(8199667, day, 'RIM', 'SLIMENI POS', 9940133199, 'INCONNU9', None, 'CREME', 1, 18, 100, 0,
+                             'CADEAU_PTS')]
+        wizard = self._import(rows)
+        self.assertIn('Point de Vente › Commandes', wizard.result)
+        Line = self.env['yr.legacy.sale.line']
+        Line._yr_make_pos_orders()
+        Order = self.env['pos.order']
+        orders = Order.search([('yr_fastmag_ticket', 'in', ['YR_YOUG/8199659', 'YR_YOUG/8199667'])])
+        self.assertEqual(len(orders), 2)
+        self.assertEqual(set(orders.mapped('state')), {'done'})
+        session = orders.session_id
+        self.assertEqual((len(session), session.state, session.yr_fastmag), (1, 'closed', True))
+        self.assertEqual(session.config_id.crm_store_id, self.store)
+        ticket = orders.filtered(lambda o: o.yr_fastmag_ticket == 'YR_YOUG/8199667')
+        self.assertEqual((ticket.partner_id, ticket.amount_total, len(ticket.lines)), (wael, 46.0, 2))
+        self.assertEqual((ticket.yr_seller_name, ticket.yr_cashier_name), ('SLIMENI POS', 'RIM'))
+        self.assertEqual(ticket.date_order.date(), day.date())
+        unknown = ticket.lines.filtered(lambda l: l.full_product_name == 'CREME')
+        self.assertEqual(unknown.product_id.default_code, 'FASTMAG-INCONNU')
+        self.assertEqual(ticket.lines.filtered(lambda l: l.qty == 2).product_id, product)
+        self.assertFalse(orders.picking_ids)
+        # the CRM counts the ticket once (POS order, not also the fastmag history of that day)
+        self.assertAlmostEqual(wael.crm_amount_total, 46.0)
+        self.assertEqual(Line.search([('ticket', '=', '8199667')]).pos_order_id, ticket)
+        # an article created later replaces « non retrouvé » on the order
+        cream = self.env['product.product'].create({'name': 'Crème', 'default_code': 'INCONNU9'})
+        self.env['res.config.settings'].create({}).action_yr_make_pos_orders()
+        self.assertEqual(unknown.product_id, cream)
+        # re-import: orders made again, no duplicate
+        self._import(rows, update_purchases=True, create_sellers=False, archive_inactive=False)
+        Line._yr_make_pos_orders()
+        self.assertEqual(Order.search_count([('yr_fastmag_ticket', 'like', 'YR_YOUG/81996')]), 2)
+        # « Commandes PdV seulement »: lines kept, orders made again on demand
+        settings = self.env['res.config.settings'].create({})
+        settings.action_yr_delete_pos_orders()
+        self.assertFalse(Order.search_count([('yr_fastmag_ticket', '!=', False)]))
+        self.assertEqual(Line.search_count([('ticket', 'in', ['8199659', '8199667'])]), 4)
+        Line._yr_make_pos_orders()
+        self.assertEqual(Order.search_count([('yr_fastmag_ticket', 'like', 'YR_YOUG/81996')]), 2)
+        # « Clients seulement »: sales and orders kept, the customer comes back with the next import
+        settings.action_yr_delete_customers()
+        self.assertFalse(wael.exists() and wael.active)
+        self.assertEqual(Order.search_count([('yr_fastmag_ticket', 'like', 'YR_YOUG/81996')]), 2)
+        self._import([NEW_HEADER, self._new_row(9940133199, 'POS', 'CLIENTE', datetime(1990, 1, 2))])
+        again = self.env['res.partner'].search([('customer_code', '=', '9940133199')])
+        self.assertEqual(Order.search([('yr_fastmag_ticket', '=', 'YR_YOUG/8199667')]).partner_id, again)
+        # « Ventes seulement »: lines and orders gone
+        settings.action_yr_delete_sales()
+        self.assertFalse(Line.search_count([]))
+        self.assertFalse(Order.search_count([('yr_fastmag_ticket', '!=', False)]))
+
     # ── seller chosen at the till ────────────────────────────────────────
     def test_pos_order_seller(self):
         seller = self.env['hr.employee'].create({'name': 'Vendeuse test'})

@@ -269,6 +269,11 @@ class YrMigrationImport(models.TransientModel):
         help='Les noms « Vendeur » et « Caissier » de fastmag sont toujours gardés sur chaque ligne de vente. '
              'Coché : chaque vendeur inconnu devient aussi un employé. Décoché : seuls les noms déjà connus '
              '(employé ou « Nom(s) fastmag ») sont rattachés à un employé.')
+    create_pos_orders = fields.Boolean(
+        'Créer les commandes du point de vente', default=True,
+        help='Chaque ticket devient une commande de Point de Vente › Commandes (session « historique fastmag » '
+             'fermée de la caisse du magasin, sans paiement, écriture comptable ni mouvement de stock). '
+             'Créées en arrière-plan après l\'import.')
     update_purchases = fields.Boolean(
         'Alimenter l\'historique d\'achats des clients', default=True,
         help='Total par carte, jour et magasin, comme le fichier « CA clients » (sans doublon avec lui) : '
@@ -566,6 +571,7 @@ class YrMigrationImport(models.TransientModel):
             'unmapped_code': _('Lignes avec code client sans carte connue (sans client)'),
             'anonymous': _('Lignes sans client (anonymes)'),
             'sellers_seen': _('Vendeurs (noms fastmag)'), 'cashiers_seen': _('Caissiers (noms fastmag)'),
+            'pos_pending': _('Tickets envoyés vers Point de Vente › Commandes (création en arrière-plan)'),
         }
 
     def _render(self, stats, errors, kind=None, sheet=None):
@@ -844,6 +850,8 @@ class YrMigrationImport(models.TransientModel):
                     update.pop('birth_day')
                 if not partner.yr_legacy_code:
                     update['yr_legacy_code'] = card
+                if not partner.active:
+                    update['active'] = True             # archived by « Supprimer les clients »: back
                 if update:
                     try:
                         with self.env.cr.savepoint():
@@ -875,6 +883,7 @@ class YrMigrationImport(models.TransientModel):
         self.env['yr.client.code'].sudo()._link_partners(cards)
         partner_ids = {partner.id for partner in self._existing_customers(cards).values()}
         partner_ids |= self.env['yr.legacy.purchase']._link_partners(cards)
+        self.env['yr.legacy.sale.line'].sudo()._link_partners(cards)
         self._refresh_crm(partner_ids)
 
     def _create_customers(self, Partner, batch, stats, errors):
@@ -1326,7 +1335,7 @@ class YrMigrationImport(models.TransientModel):
         mapped = self.env['yr.client.code'].sudo()._cards_for(
             {client_code(i.get('fm_id')) for i in items if not card_number(i.get('card'))} - {''})
         unmapped, sellers_seen, cashiers_seen, unknown_refs = defaultdict(int), set(), set(), defaultdict(int)
-        visits, to_create, cards = {}, [], set()
+        visits, to_create, cards, changed_tickets = {}, [], set(), set()
         done = 0
         for item in items:
             store = stores.get(item['shop'])
@@ -1375,6 +1384,8 @@ class YrMigrationImport(models.TransientModel):
             elif line:
                 line.write(vals)
                 stats['updated'] += 1
+                if line.pos_order_id:
+                    changed_tickets.add('%s/%s' % (item['shop'], item['ticket']))
             else:
                 to_create.append(vals)
             if card:
@@ -1400,7 +1411,16 @@ class YrMigrationImport(models.TransientModel):
             self._note('-', ref, _('Article inconnu'), _('%s ligne(s) gardée(s) sans article', count))
         for shop in sorted(stats.get('stores_missing') or ()):
             self._note('-', shop, _('Magasin inconnu'), _('ventes gardées sans magasin'))
+        if changed_tickets:
+            # re-imported tickets: their POS orders are made again from the updated lines
+            ticket_list = list(changed_tickets)
+            for start in range(0, len(ticket_list), 20000):
+                SaleLine._yr_delete_pos_orders(ticket_list[start:start + 20000])
         SaleLine._link_partners(list(cards))
+        if self.create_pos_orders:
+            stats['pos_pending'] = len(tickets)
+            SaleLine.flush_model()
+            SaleLine._yr_trigger_pos_orders()
         if visits and self.update_purchases:
             self._save_purchases(visits, stats, errors, created='purchases', updated='purchases', stores=stores)
 
