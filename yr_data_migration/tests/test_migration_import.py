@@ -233,6 +233,27 @@ class TestMigrationImport(TransactionCase):
         self._import([NEW_HEADER, row])
         self.assertEqual((partner.street, partner.street2), ('4 RUE EL KAADINE', 'RESIDENCE LES PINS BLOC B'))
 
+    def test_customers_civility(self):
+        """Civilité / ancienne civilité / sexe: from the list (abbreviations understood, new values added);
+        a later file with the card and the civility only completes the customers."""
+        header = ['CardNumbre', 'SurName', 'FirstName', 'Civilité', 'Ancienne civilité', 'Sexe']
+        self._import([header, [990055001, 'CIV', 'UN', 'Mme', 'MLLE', None],
+                      [990055002, 'CIV', 'DEUX', 'Maître', None, 'H'],
+                      [990055003, 'CIV', 'TROIS', None, None, None]])
+        Partner = self.env['res.partner']
+        one, two, three = (Partner.search([('customer_code', '=', c)]) for c in ('990055001', '990055002',
+                                                                                  '990055003'))
+        self.assertEqual(one.title, self.env.ref('base.res_partner_title_madam'))
+        self.assertEqual(one.yr_old_title_id, self.env.ref('base.res_partner_title_miss'))
+        self.assertEqual(one.yr_gender, 'f')                         # deduced from « Madame »
+        self.assertEqual((two.title.name, two.yr_gender), ('Maître', 'h'))   # new civility added to the list
+        self.assertFalse(three.title)                                # empty for now
+        self._import([['CardNumbre', 'Civilite'], [990055003, 'M.']])
+        self.assertEqual((three.title, three.yr_gender, three.name),
+                         (self.env.ref('base.res_partner_title_mister'), 'h', 'CIV TROIS'))
+        arch = Partner.get_view(self.env.ref('base.view_partner_form').id, 'form')['arch']
+        self.assertIn('name="yr_old_title_id"', arch)
+
     def test_customers_old_file(self):
         def old(card, birthday, last, first, tel, gender=None, npai=0):
             row = [None] * len(OLD_HEADER)

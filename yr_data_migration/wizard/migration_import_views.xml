@@ -183,6 +183,9 @@
             <p>Importez le fichier « Liste client » (CodeClient, Cartefidelite) dans Reprise fastmag.</p>
         </field>
     </record>
+    <menuitem id="menu_yr_partner_title" name="Civilités"
+              parent="loyalty_tier_marketing.menu_loyalty_tier_config" action="base.action_partner_title_contact"
+              sequence="89"/>
     <menuitem id="menu_yr_client_code" name="Codes clients fastmag (Y…)"
               parent="loyalty_tier_marketing.menu_loyalty_tier_config" action="action_yr_client_code"
               sequence="92"/>

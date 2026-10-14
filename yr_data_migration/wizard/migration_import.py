@@ -50,12 +50,17 @@ COLUMNS = {
         'postalcode': 'zip', 'phone': 'phone', 'birthday': 'birthday', 'entrancedate': 'entry_date',
         'codeshop': 'shop', 'codeseller': 'seller', 'firstpurchase': 'first_purchase', 'mobile': 'mobile',
         'email': 'email', 'montantttc': 'amount',
+        'civilite': 'title', 'civility': 'title', 'titre': 'title', 'title': 'title',
+        'anciennecivilite': 'old_title', 'oldcivility': 'old_title', 'ancienneciv': 'old_title',
+        'sexe': 'gender', 'genre': 'gender', 'gender': 'gender', 'sex': 'gender',
     },
     'client_old': {
         'numcliente': 'card', 'numclienteold': 'old_code', 'naissance': 'birthday', 'nomx': 'lastname',
         'nom': 'lastname', 'prenom': 'firstname', 'rue1': 'street', 'rue2': 'street2', 'rue3': 'street3',
         'cp': 'zip', 'ville': 'city', 'npai': 'npai', 'numvendeuse': 'seller', 'segment': 'segment',
         'tel2': 'phone', 'sexe': 'gender', 'dateexcel': 'entry_date',
+        'civilite': 'title', 'civility': 'title', 'titre': 'title',
+        'anciennecivilite': 'old_title', 'oldcivility': 'old_title',
     },
     'client_codes': {
         'codeclient': 'code', 'cartefidelite': 'card', 'nom': 'name', 'datecreation': 'date',
@@ -87,6 +92,14 @@ SIGNATURE = {
     'stores': {'magasin', 'code'},
     'sellers': {'vendeurs'},
 }
+# civilities written in many ways in the files → the standard list (gender deduced when the file has none)
+TITLE_ALIASES = [
+    ('base.res_partner_title_madam', ('madame', 'mme', 'mrs', 'madam', 'mde'), 'f'),
+    ('base.res_partner_title_miss', ('mademoiselle', 'mlle', 'melle', 'mle', 'miss'), 'f'),
+    ('base.res_partner_title_mister', ('monsieur', 'm', 'mr', 'mister', 'mons'), 'h'),
+    ('base.res_partner_title_doctor', ('docteur', 'dr', 'doctor'), False),
+    ('base.res_partner_title_prof', ('professeur', 'pr', 'prof', 'professor'), False),
+]
 STAMP_REFS = {'DTT', 'TIMBRE'}      # « droit de timbre sur ticket »: not an article
 MAX_NOTES = 100000                   # lines of the detailed report (Excel)
 
@@ -760,6 +773,12 @@ class YrMigrationImport(models.TransientModel):
         vals.update(phone=tel, mobile=mobile)
         gender = text(item.get('gender')).lower()
         vals['yr_gender'] = 'f' if gender[:1] == 'f' else 'h' if gender[:1] in ('h', 'm') else False
+        # civilité / ancienne civilité: from the list (Madame, Mlle, M.…), a new value is added to the list
+        title = self._title_id(item.get('title'))
+        vals['title'] = title
+        vals['yr_old_title_id'] = self._title_id(item.get('old_title'))
+        if title and not vals['yr_gender']:
+            vals['yr_gender'] = self._cache().get('title_gender', {}).get(title, False)
         if kind == 'client_old' and item.get('npai') not in (None, ''):
             vals['yr_npai'] = bool(number(item.get('npai')))
         birthday = parse_birthday(item.get('birthday'), unknown_years)
@@ -778,6 +797,31 @@ class YrMigrationImport(models.TransientModel):
                 stats['stores_missing'].add(shop)
                 stats['unknown_stores'] += 1
         return {k: v for k, v in vals.items() if v not in (None, '', False) or k == 'birth_year'}
+
+    def _title_id(self, value):
+        """Civility of the file (Madame, MME, Mlle, M., Monsieur, Dr…) → res.partner.title, created if new."""
+        key = norm(value)
+        if not key:
+            return False
+        cache = self._cache()
+        if 'titles' not in cache:
+            Title = self.env['res.partner.title'].sudo()
+            titles, genders = {}, {}
+            for xmlid, aliases, gender in TITLE_ALIASES:
+                title = self.env.ref(xmlid, raise_if_not_found=False)
+                if title:
+                    titles.update(dict.fromkeys(aliases, title.id))
+                    if gender:
+                        genders[title.id] = gender
+            for lang in [code for code, _name in self.env['res.lang'].get_installed()]:
+                for title in Title.with_context(lang=lang).search([]):
+                    for label in (title.name, title.shortcut):
+                        if norm(label):
+                            titles.setdefault(norm(label), title.id)
+            cache['titles'], cache['title_gender'] = titles, genders
+        if key not in cache['titles']:
+            cache['titles'][key] = self.env['res.partner.title'].sudo().create({'name': text(value).title()}).id
+        return cache['titles'][key]
 
     def _cache(self):
         """Per-import cache (dict given in the context by action_import)."""
