@@ -1488,4 +1488,4 @@ class YrMigrationImport(models.TransientModel):
     def _refresh_crm(self, partner_ids):
         """Customer status, first / last purchase, turnover of Fidélité & CRM, now (normally hourly)."""
         if partner_ids:
-            self.env['loyalty.crm.engine'].sudo().refresh_partners(list(partner_ids))
+            self.env['yr.legacy.sale.line']._yr_refresh_partners(partner_ids)

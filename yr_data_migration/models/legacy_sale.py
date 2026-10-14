@@ -3,6 +3,8 @@
 seller (Vendeur). The totals per customer, day and store also feed the purchase history (yr.legacy.purchase)."""
 import logging
 import re
+
+import psycopg2
 import time
 from collections import defaultdict
 from datetime import datetime, time as dtime
@@ -321,10 +323,32 @@ class YrLegacySaleLine(models.Model):
         """, orders.ids))
         self.invalidate_model(['pos_order_id'])
         if partner_ids:
-            self.env['loyalty.crm.engine'].sudo().refresh_partners(list(partner_ids))
+            self._yr_refresh_partners(partner_ids)
         cr.execute(SQL('SELECT 1 FROM yr_legacy_sale_line WHERE pos_order_id IS NULL AND store_id = ANY(%s) LIMIT 1',
                        ready))
         return len(orders), bool(cr.fetchone())
+
+    @api.model
+    def _yr_refresh_partners(self, partner_ids):
+        """Customer statistics of Fidélité & CRM. An import and the background order creation may refresh the
+        same customers at the same time (« could not serialize access »): the work done is saved first, then
+        the refresh is retried in a new transaction; if it still collides, the nightly full refresh catches up."""
+        engine = self.env['loyalty.crm.engine'].sudo()
+        partner_ids = list(partner_ids)
+        if not self._yr_can_commit():
+            engine.refresh_partners(partner_ids)
+            return
+        self.env.cr.commit()
+        for attempt in range(5):
+            try:
+                engine.refresh_partners(partner_ids)
+                self.env.cr.commit()
+                return
+            except psycopg2.errors.SerializationFailure:
+                self.env.cr.rollback()
+                time.sleep(1 + 2 * attempt)
+        _logger.warning('fastmag: statistiques de %s client(s) non recalculées (accès concurrent) : '
+                        'mises à jour au recalcul complet de la nuit.', len(partner_ids))
 
     @api.model
     def _cron_yr_pos_orders(self):
