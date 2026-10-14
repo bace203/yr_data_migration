@@ -123,6 +123,31 @@ class YrLegacySaleLine(models.Model):
         }
 
     # ── fastmag tickets → Point de Vente orders ──────────────────────────
+    # columns pointing to POS orders / lines without an index in Odoo: deleting 100 000s of orders would
+    # read the whole table for each deleted line (stuck at 100 % CPU)
+    FK_INDEXES = [
+        ('pos_order_line', 'combo_parent_id'), ('pos_order_line', 'refunded_orderline_id'),
+        ('pos_pack_operation_lot', 'pos_order_line_id'), ('product_attribute_custom_value', 'pos_order_line_id'),
+        ('loyalty_card', 'source_pos_order_id'), ('loyalty_campaign_result', 'pos_order_id'),
+        ('payment_transaction', 'pos_order_id'), ('account_move', 'reversed_pos_order_id'),
+        ('account_payment', 'pos_order_id'), ('procurement_group', 'pos_order_id'),
+    ]
+
+    def init(self):
+        super().init()
+        self._yr_fk_indexes()
+
+    @api.model
+    def _yr_fk_indexes(self):
+        cr = self.env.cr
+        for table, column in self.FK_INDEXES:
+            cr.execute("""SELECT 1 FROM information_schema.columns WHERE table_name = %s AND column_name = %s""",
+                       (table, column))
+            if cr.fetchone():
+                cr.execute(SQL('CREATE INDEX IF NOT EXISTS %s ON %s (%s) WHERE %s IS NOT NULL',
+                               SQL.identifier('%s_%s_yr_idx' % (table, column)), SQL.identifier(table),
+                               SQL.identifier(column), SQL.identifier(column)))
+
     @api.model
     def _yr_can_commit(self):
         return not odoo_module.current_test and not self.env.registry.in_test_mode()
@@ -322,6 +347,7 @@ class YrLegacySaleLine(models.Model):
         they are made again from the imported lines."""
         cr = self.env.cr
         self.env['pos.order'].flush_model()
+        self._yr_fk_indexes()                 # modules installed since: their columns are indexed too
         count = 0
         while True:
             if tickets is None:
