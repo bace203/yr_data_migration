@@ -1062,22 +1062,27 @@ class YrMigrationImport(models.TransientModel):
             stats['stores_missing'] = unknown_shops
         Legacy = self.env['yr.legacy.purchase'].sudo()
         cards = list({card for card, _day, _shop in visits})
-        existing = {}
-        for chunk in range(0, len(cards), 5000):
-            for line in Legacy.search([('card', 'in', cards[chunk:chunk + 5000])]):
-                existing[(line.card, line.date, line.shop_code or '')] = line
+        existing = {}             # (card, day, shop) → (id, amount, store id): never whole records
+        for chunk in range(0, len(cards), 20000):
+            self.env.cr.execute(SQL("""
+                SELECT card, date, COALESCE(shop_code, ''), id, amount, store_id
+                  FROM yr_legacy_purchase WHERE card = ANY(%s)
+            """, cards[chunk:chunk + 20000]))
+            for card, day, shop, line_id, amount, store_id in self.env.cr.fetchall():
+                existing[(card, day, shop)] = (line_id, amount or 0.0, store_id)
         to_create = []
         for (card, day, shop), visit in visits.items():
             store = stores.get(shop) if shop else False
-            line = existing.get((card, day, shop))
-            if line:
+            found = existing.get((card, day, shop or ''))
+            if found:
+                line_id, amount, store_id = found
                 vals = {}
-                if abs(line.amount - visit['amount']) > 0.0001:
+                if abs(amount - visit['amount']) > 0.0001:
                     vals['amount'] = visit['amount']
-                if store and line.store_id != store:
+                if store and store_id != store.id:
                     vals['store_id'] = store.id
                 if vals:
-                    line.write(vals)
+                    Legacy.browse(line_id).write(vals)
                     stats[updated] += 1
                 continue
             if shop and not store:
@@ -1361,10 +1366,19 @@ class YrMigrationImport(models.TransientModel):
         for product in Product.search(['|', ('default_code', 'in', list(refs)), ('barcode', 'in', list(eans))]):
             products.setdefault(('ref', product.default_code), product)
             products.setdefault(('ean', product.barcode), product)
+        # lines already imported: only their key, id and order (never whole records: millions of lines)
         existing = {}
-        shops = list({shop for shop, _ticket in tickets})
-        for line in SaleLine.search([('shop_code', 'in', shops), ('ticket', 'in', list({t for _s, t in tickets}))]):
-            existing[(line.shop_code, line.ticket, line.sequence)] = line
+        keys = list(tickets)
+        for start in range(0, len(keys), 20000):
+            chunk = keys[start:start + 20000]
+            self.env.cr.execute(SQL("""
+                SELECT l.shop_code, l.ticket, l.sequence, l.id, l.pos_order_id
+                  FROM yr_legacy_sale_line l
+                  JOIN unnest(%s::varchar[], %s::varchar[]) AS k(shop, ticket)
+                    ON l.shop_code = k.shop AND l.ticket = k.ticket
+            """, [shop for shop, _ticket in chunk], [ticket for _shop, ticket in chunk]))
+            for shop, ticket, sequence, line_id, order_id in self.env.cr.fetchall():
+                existing[(shop, ticket, sequence)] = (line_id, order_id)
 
         def employee(name, create, store):
             key = ' '.join(name.upper().split())
@@ -1422,14 +1436,17 @@ class YrMigrationImport(models.TransientModel):
                 'discount': number(item.get('discount')) or 0.0, 'amount': total,
                 'reason': text(item.get('reason')) or False, 'comment': text(item.get('comment')) or False,
             }
-            line = existing.get((item['shop'], item['ticket'], item['sequence']))
-            if line and self.env.context.get('yr_resume'):
+            found = existing.get((item['shop'], item['ticket'], item['sequence']))
+            if found and self.env.context.get('yr_resume'):
                 stats['already'] += 1                   # saved before the interruption
-            elif line:
-                line.write(vals)
+            elif found:
+                SaleLine.browse(found[0]).write(vals)
                 stats['updated'] += 1
-                if line.pos_order_id:
+                if found[1]:
                     changed_tickets.add('%s/%s' % (item['shop'], item['ticket']))
+                if stats['updated'] % 5000 == 0:
+                    SaleLine.flush_model()
+                    SaleLine.invalidate_model()         # keeps the memory flat on a big re-import
             else:
                 to_create.append(vals)
             if card:
