@@ -603,8 +603,10 @@ class TestMigrationImport(TransactionCase):
         slimeni.seller_id.unlink()
         self.assertFalse(slimeni.seller_id)
         employee = self.env['hr.employee'].create({'name': 'Slimeni Maram', 'yr_fastmag_name': 'slimeni test'})
+        Line._yr_make_pos_orders()
         Line._link_employees()
         self.assertEqual(slimeni.seller_id, employee)
+        self.assertEqual(slimeni.pos_order_id.yr_seller_id, employee)   # the POS order follows
 
     def test_sales_become_pos_orders(self):
         """Each imported ticket becomes a POS order of a closed « historique fastmag » session; the CRM counts it

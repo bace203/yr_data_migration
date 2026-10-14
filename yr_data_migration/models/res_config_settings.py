@@ -149,9 +149,11 @@ class ResConfigSettings(models.TransientModel):
         self._yr_check_admin()
         Line = self.env['yr.legacy.sale.line'].sudo()
         linked = Line._yr_link_stores_products()
+        linked['employees'] = Line._link_employees()          # « Nom(s) fastmag » filled in since the import
         Line._yr_trigger_pos_orders()
         return {'type': 'ir.actions.client', 'tag': 'display_notification', 'params': {
             'title': _('Commandes du point de vente'), 'type': 'success', 'sticky': True,
-            'message': _('%(stores)s ligne(s) rattachée(s) à leur magasin et %(products)s à leur article. '
+            'message': _('%(stores)s ligne(s) rattachée(s) à leur magasin, %(products)s à leur article et '
+                         '%(employees)s à leur vendeur / caissier. '
                          'Les commandes PdV manquantes sont créées en arrière-plan (Point de Vente › Commandes).',
                          **linked)}}

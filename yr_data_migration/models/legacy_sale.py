@@ -111,7 +111,28 @@ class YrLegacySaleLine(models.Model):
                     lines = self.search([(field, '=', False), (name_field, '=', name)])
                     lines.write({field: employee.id})
                     count += len(lines)
+        self._yr_sync_order_employees()
         return count
+
+    @api.model
+    def _yr_sync_order_employees(self):
+        """The POS orders made from fastmag tickets follow their lines: seller (Vendeur) and cashier."""
+        self.flush_model()
+        self.env['pos.order'].flush_model()
+        self.env.cr.execute("""
+            UPDATE pos_order o SET yr_seller_id = l.seller_id, yr_seller_ref = l.seller_id
+              FROM yr_legacy_sale_line l
+             WHERE l.pos_order_id = o.id AND l.seller_id IS NOT NULL AND o.yr_seller_id IS DISTINCT FROM l.seller_id
+        """)
+        if 'employee_id' in self.env['pos.order']._fields:
+            self.env.cr.execute("""
+                UPDATE pos_order o SET employee_id = l.cashier_id
+                  FROM yr_legacy_sale_line l
+                 WHERE l.pos_order_id = o.id AND l.cashier_id IS NOT NULL
+                   AND o.employee_id IS DISTINCT FROM l.cashier_id
+            """)
+        self.env['pos.order'].invalidate_model(['yr_seller_id', 'yr_seller_ref'] + (
+            ['employee_id'] if 'employee_id' in self.env['pos.order']._fields else []))
 
     def action_link_employees(self):
         count = self._link_employees()
