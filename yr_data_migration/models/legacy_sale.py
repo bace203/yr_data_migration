@@ -143,10 +143,15 @@ class YrLegacySaleLine(models.Model):
         for table, column in self.FK_INDEXES:
             cr.execute("""SELECT 1 FROM information_schema.columns WHERE table_name = %s AND column_name = %s""",
                        (table, column))
-            if cr.fetchone():
-                cr.execute(SQL('CREATE INDEX IF NOT EXISTS %s ON %s (%s) WHERE %s IS NOT NULL',
-                               SQL.identifier('%s_%s_yr_idx' % (table, column)), SQL.identifier(table),
-                               SQL.identifier(column), SQL.identifier(column)))
+            if not cr.fetchone():
+                continue
+            try:
+                with cr.savepoint():
+                    cr.execute(SQL('CREATE INDEX IF NOT EXISTS %s ON %s (%s) WHERE %s IS NOT NULL',
+                                   SQL.identifier('%s_%s_yr_idx' % (table, column)), SQL.identifier(table),
+                                   SQL.identifier(column), SQL.identifier(column)))
+            except Exception as error:  # noqa: BLE001 - never blocks the update / deletion
+                _logger.warning('fastmag: index %s.%s non créé : %s', table, column, error)
 
     @api.model
     def _yr_can_commit(self):

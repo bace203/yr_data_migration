@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
+import logging
+
 from odoo import api, fields, models
+
+_logger = logging.getLogger(__name__)
 
 
 class PosOrder(models.Model):
@@ -40,10 +44,14 @@ class PosOrder(models.Model):
     def init(self):
         super().init()
         # the CRM history (yr.legacy.purchase) skips the days already present as fastmag tickets
-        self.env.cr.execute("""
-            CREATE INDEX IF NOT EXISTS pos_order_yr_fastmag_card_date_idx
-                ON pos_order (yr_fastmag_card, date_order) WHERE yr_fastmag_card IS NOT NULL
-        """)
+        try:
+            with self.env.cr.savepoint():
+                self.env.cr.execute("""
+                    CREATE INDEX IF NOT EXISTS pos_order_yr_fastmag_card_date_idx
+                        ON pos_order (yr_fastmag_card, date_order) WHERE yr_fastmag_card IS NOT NULL
+                """)
+        except Exception as error:  # noqa: BLE001 - never blocks the update (made at the next one)
+            _logger.warning('fastmag: index pos_order (carte, date) non créé : %s', error)
 
 
 class PosOrderLine(models.Model):
