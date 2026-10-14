@@ -772,13 +772,13 @@ class YrMigrationImport(models.TransientModel):
             mobile, tel = tel, ''            # Tunisian mobile numbers start with 2, 4, 5 or 9
         vals.update(phone=tel, mobile=mobile)
         gender = text(item.get('gender')).lower()
-        vals['yr_gender'] = 'f' if gender[:1] == 'f' else 'h' if gender[:1] in ('h', 'm') else False
+        vals['crm_gender'] = 'f' if gender[:1] == 'f' else 'h' if gender[:1] in ('h', 'm') else False
         # civilité / ancienne civilité: from the list (Madame, Mlle, M.…), a new value is added to the list
         title = self._title_id(item.get('title'))
         vals['title'] = title
-        vals['yr_old_title_id'] = self._title_id(item.get('old_title'))
-        if title and not vals['yr_gender']:
-            vals['yr_gender'] = self._cache().get('title_gender', {}).get(title, False)
+        vals['crm_old_title_id'] = self._title_id(item.get('old_title'))
+        if title and not vals['crm_gender']:
+            vals['crm_gender'] = self._cache().get('title_gender', {}).get(title, False)
         if kind == 'client_old' and item.get('npai') not in (None, ''):
             vals['yr_npai'] = bool(number(item.get('npai')))
         birthday = parse_birthday(item.get('birthday'), unknown_years)

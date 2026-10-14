@@ -3,22 +3,14 @@ from odoo import _, fields, models
 from odoo.exceptions import UserError
 
 FROZEN_FIELDS = ('yr_legacy_amount', 'yr_migration_date')
-FR_TITLES = [
-    ('base.res_partner_title_madam', 'Madame', 'Mme'), ('base.res_partner_title_miss', 'Mademoiselle', 'Mlle'),
-    ('base.res_partner_title_mister', 'Monsieur', 'M.'), ('base.res_partner_title_doctor', 'Docteur', 'Dr'),
-    ('base.res_partner_title_prof', 'Professeur', 'Pr'),
-]
 
 
 class ResPartner(models.Model):
     _inherit = 'res.partner'
 
-    # Already in Fidélité & CRM and reused: birth_day / birth_month / birth_year, customer_code (= card number,
-    # also the barcode scanned at the POS), crm_store_id, crm_first_order_date…
-    yr_gender = fields.Selection([('f', 'Femme'), ('h', 'Homme')], 'Sexe')
-    # civilité = the standard « title » (list Madame, Mademoiselle, Monsieur… editable in Configuration › Civilités)
-    yr_old_title_id = fields.Many2one('res.partner.title', 'Ancienne civilité', ondelete='set null',
-                                      help='Civilité de l\'ancien système (même liste que la civilité).')
+    # Already in Fidélité & CRM and reused: birth_day / birth_month / birth_year, title (civilité),
+    # crm_old_title_id, crm_gender, customer_code (= card number, also the barcode scanned at the POS),
+    # crm_store_id, crm_first_order_date…
     yr_legacy_code = fields.Char('Code client fastmag', index=True, copy=False,
                                  help='Numéro de carte / numéro client dans fastmag.')
     yr_client_code = fields.Char('Code client fastmag (Y…)', index=True, copy=False,
@@ -41,19 +33,6 @@ class ResPartner(models.Model):
 
     # « chiffre d'affaires clients depuis 2 ans » file: purchase lines, counted by Fidélité & CRM
     yr_legacy_purchase_ids = fields.One2many('yr.legacy.purchase', 'partner_id', 'Achats fastmag')
-
-    def init(self):
-        super().init()
-        # French names of the standard civilities when the database is in French and they are not translated
-        if not self.env['res.lang'].search_count([('code', '=', 'fr_FR'), ('active', '=', True)]):
-            return
-        for xmlid, name, shortcut in FR_TITLES:
-            title = self.env.ref(xmlid, raise_if_not_found=False)
-            if title:
-                fr = title.with_context(lang='fr_FR')
-                english = title.with_context(lang='en_US')
-                if fr.name == english.name:
-                    fr.write({'name': name, 'shortcut': shortcut})
 
     def _compute_yr_currency_id(self):
         for partner in self:

@@ -6,16 +6,6 @@
         <field name="model">res.partner</field>
         <field name="inherit_id" ref="loyalty_tier_marketing.res_partner_view_form_tier"/>
         <field name="arch" type="xml">
-            <!-- civilité, ancienne civilité and sex together, in the customer's identity -->
-            <xpath expr="//field[@name='crm_store_id']" position="before">
-                <xpath expr="//field[@name='title']" position="move"/>
-                <field name="yr_old_title_id" invisible="is_company" options="{'no_open': True, 'no_create': True}"/>
-                <field name="yr_gender" invisible="is_company"/>
-            </xpath>
-            <xpath expr="//field[@name='title']" position="attributes">
-                <attribute name="string">Civilité</attribute>
-                <attribute name="placeholder">ex. Madame</attribute>
-            </xpath>
             <!-- one « Créé par »: the seller of the fastmag file for imported customers, else the standard creator -->
             <xpath expr="//field[@name='create_uid']" position="attributes">
                 <attribute name="invisible">not crm_is_customer or not id or yr_seller_id</attribute>
@@ -50,18 +40,6 @@
                         <field name="amount" sum="Total"/>
                     </list>
                 </field>
-            </xpath>
-        </field>
-    </record>
-    <record id="res_partner_list_fastmag" model="ir.ui.view">
-        <field name="name">res.partner.list.fastmag</field>
-        <field name="model">res.partner</field>
-        <field name="inherit_id" ref="loyalty_tier_marketing.res_partner_view_list_crm_customers"/>
-        <field name="arch" type="xml">
-            <xpath expr="//list" position="inside">
-                <field name="title" string="Civilité" optional="hide"/>
-                <field name="yr_old_title_id" optional="hide"/>
-                <field name="yr_gender" optional="hide"/>
             </xpath>
         </field>
     </record>

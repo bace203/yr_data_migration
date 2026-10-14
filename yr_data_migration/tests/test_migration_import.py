@@ -244,15 +244,15 @@ class TestMigrationImport(TransactionCase):
         one, two, three = (Partner.search([('customer_code', '=', c)]) for c in ('990055001', '990055002',
                                                                                   '990055003'))
         self.assertEqual(one.title, self.env.ref('base.res_partner_title_madam'))
-        self.assertEqual(one.yr_old_title_id, self.env.ref('base.res_partner_title_miss'))
-        self.assertEqual(one.yr_gender, 'f')                         # deduced from « Madame »
-        self.assertEqual((two.title.name, two.yr_gender), ('Maître', 'h'))   # new civility added to the list
+        self.assertEqual(one.crm_old_title_id, self.env.ref('base.res_partner_title_miss'))
+        self.assertEqual(one.crm_gender, 'f')                         # deduced from « Madame »
+        self.assertEqual((two.title.name, two.crm_gender), ('Maître', 'h'))   # new civility added to the list
         self.assertFalse(three.title)                                # empty for now
         self._import([['CardNumbre', 'Civilite'], [990055003, 'M.']])
-        self.assertEqual((three.title, three.yr_gender, three.name),
+        self.assertEqual((three.title, three.crm_gender, three.name),
                          (self.env.ref('base.res_partner_title_mister'), 'h', 'CIV TROIS'))
         arch = Partner.get_view(self.env.ref('base.view_partner_form').id, 'form')['arch']
-        self.assertIn('name="yr_old_title_id"', arch)
+        self.assertIn('name="crm_old_title_id"', arch)
 
     def test_customers_old_file(self):
         def old(card, birthday, last, first, tel, gender=None, npai=0):
@@ -270,7 +270,7 @@ class TestMigrationImport(TransactionCase):
         bassima = Partner.search([('customer_code', '=', '990001529')])
         self.assertEqual((bassima.name, bassima.mobile, bassima.phone), ('AMRI BASSIMA', '22513690', False))
         self.assertEqual((bassima.birth_day, bassima.birth_month, bassima.birth_year), ('23', '1', False))
-        self.assertEqual((bassima.yr_gender, bassima.yr_npai, bassima.yr_legacy_segment), ('f', True, 'PA'))
+        self.assertEqual((bassima.crm_gender, bassima.yr_npai, bassima.yr_legacy_segment), ('f', True, 'PA'))
         chiraz = Partner.search([('customer_code', '=', '990001552')])
         self.assertEqual((chiraz.birth_year, chiraz.phone), ('1978', '71234567'))
         # year 2000 kept when the option is off
