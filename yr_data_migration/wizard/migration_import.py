@@ -120,7 +120,6 @@ TITLE_ALIASES = [
 ]
 LAST_WINS = {'article_sage': {'brand'}}    # two columns with the same header: the last one holds the name
 COUPON_CATEGORIES = {'CAFV'}                  # « BON D'ACHAT »: a coupon is not a product
-COUPON_REF = re.compile(r'^Y\d{6,}$')          # coupon code typed / scanned instead of an article barcode
 DEDUCED_REASON = 'Remise (déduite)'
 STAMP_REFS = {'DTT', 'TIMBRE'}      # « droit de timbre sur ticket »: not an article
 MAX_NOTES = 100000                   # lines of the detailed report (Excel)
@@ -275,13 +274,9 @@ def client_code(value):
 
 
 def is_coupon(item):
-    """A coupon used on a ticket: its code (Y13051967) in the barcode column on a line given for free (100 % off or
-    total 0), or a « BON D'ACHAT » line given for free. Other Y… codes and sold vouchers are not coupons."""
-    free = (number(item.get('discount')) or 0) >= 99.99 or not (number(item.get('total')) or 0)
-    if not free:
-        return False
-    return bool(COUPON_REF.match(text(item.get('ref')).upper()) or COUPON_REF.match(text(item.get('ean')).upper())
-                or norm(item.get('name')).startswith('bondachat'))
+    """A coupon line: the word « coupon » in its label. Codes (Y13051967…) are not a criterion: some free products
+    carry such codes."""
+    return 'coupon' in norm(item.get('name'))
 
 
 def is_xls(content):

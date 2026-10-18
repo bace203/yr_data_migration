@@ -751,14 +751,14 @@ class TestMigrationImport(TransactionCase):
                              'CADEAU_PTS')]
         wizard = self._import(rows)
         lines = self.env['yr.legacy.sale.line'].search([('ticket', '=', '7199001')])
-        self.assertEqual(sorted(lines.mapped('product_ref')), ['Y88074', 'ZZ1', 'ZZ2'])      # only the coupons are left out
+        self.assertEqual(sorted(lines.mapped('product_ref')), ['100000000', 'Y88074', 'ZZ1', 'ZZ2'])      # only the « coupon » label is left out
         self.assertIn('coupon', wizard.result.lower())
         motifs = lines.mapped('motif_id')
-        self.assertEqual(sorted(motifs.mapped('name')), ['CADEAU_PTS', 'ECHANGE'])
+        self.assertEqual(sorted(motifs.mapped('name')), ['CADEAU_PTS', 'ECHANGE', 'Remise (déduite)'])   # + the free bon d'achat line
         self.assertEqual(motifs.filtered(lambda m: m.name == 'ECHANGE').type, 'exchange')
         self.env['yr.legacy.sale.line']._yr_make_pos_orders()
         order = self.env['pos.order'].search([('yr_fastmag_ticket', '=', 'YR_YOUG/7199001')])
-        self.assertEqual(sorted(order.lines.mapped('crm_motif_id.name')), ['CADEAU_PTS', 'ECHANGE'])
+        self.assertEqual(sorted(order.lines.mapped('crm_motif_id.name')), ['CADEAU_PTS', 'ECHANGE', 'Remise (déduite)'])
         # a campaign is a motif too: its name typed as the motif counts the ticket as a return of the campaign
         campaign = self.env['loyalty.tier.campaign'].create({'name': 'Fête des mères test', 'date_end': date.today()})
         self.assertEqual(self.env['loyalty.motif'].search([('campaign_id', '=', campaign.id)]).type, 'campaign')
