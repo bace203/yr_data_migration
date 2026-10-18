@@ -7,6 +7,7 @@ created (matched on article code / barcode and customer card number) instead of 
 import base64
 import difflib
 import hashlib
+import json
 import time
 import csv
 import io
@@ -336,7 +337,6 @@ class YrMigrationImport(models.TransientModel):
         'Ignorer les fichiers déjà importés', default=True,
         help='Un fichier déjà importé en entier (même contenu) est passé. Décochez pour le réimporter : les lignes '
              'sont mises à jour, sans doublon.')
-    queue_info = fields.Char(readonly=True)
     filename = fields.Char()
     file_type = fields.Selection(FILE_TYPES, 'Type de fichier', compute='_compute_file_type', store=True,
                                  readonly=False, help='Reconnu automatiquement d\'après les en-têtes.')
@@ -449,8 +449,7 @@ class YrMigrationImport(models.TransientModel):
         log = self.sudo().log_id
         if not log:
             return {}
-        label = '%s — %s' % (self.sudo().queue_info, log.label or '') if self.sudo().queue_info else log.label or ''
-        return {'state': log.state, 'done': log.done, 'total': log.total, 'label': label,
+        return {'state': log.state, 'done': log.done, 'total': log.total, 'label': log.label or '',
                 'progress': log.progress}
 
     # ── reading ──────────────────────────────────────────────────────────
@@ -583,9 +582,9 @@ class YrMigrationImport(models.TransientModel):
             'name': self.filename or _('Fichier'), 'file_hash': self._file_hash(), 'file_type': self.file_type})
         log.write({'state': 'running', 'label': _('Démarrage'), 'user_id': self.env.uid})
         self.log_id = log
-        queue = self.browse(self.env.context.get('yr_queue_wizard') or [])
-        if queue:
-            queue.log_id = log               # the bar of the queue screen follows the file being imported
+        item = self.env['yr.migration.queue'].browse(self.env.context.get('yr_queue_item') or [])
+        if item:
+            item.log_id = log                # the queue screen follows the file being imported
         self._commit()                       # the screen can follow the progress from now on
         env = self.with_context(tracking_disable=True, mail_create_nolog=True, mail_notrack=True,
                                 yr_migration_force=True, yr_resume=resume, yr_progress_clock=[0], yr_cache={},
@@ -644,50 +643,23 @@ class YrMigrationImport(models.TransientModel):
         return int(found[-1]) if found else 0
 
     def action_import_queue(self):
-        """Imports the chosen files one by one: by file type (the order the data needs), then by part number."""
+        """Puts the chosen files in the import queue: they are imported one after the other in the background, by
+        file type (the order the data needs) then by part number, without anyone in front of the screen."""
         self.ensure_one()
-        options = {name: self[name] for name in self.OPTIONS}
-        jobs = []
+        options = json.dumps({name: self[name] for name in self.OPTIONS})
+        Queue = self.env['yr.migration.queue']
         for attachment in self.file_ids:
-            sub = self.create(dict(options, file=attachment.datas, filename=attachment.name))
-            kind = sub.file_type
+            kind = self.create({'file': attachment.datas, 'filename': attachment.name}).file_type
             order = SHEET_ORDER.index(kind) if kind in SHEET_ORDER else (-1 if kind == 'workbook' else len(SHEET_ORDER))
-            jobs.append((order, self._part_number(attachment.name), (attachment.name or '').lower(), sub, attachment))
-        jobs.sort(key=lambda job: job[:3])
-        html, done_attachments, failed = '', self.env['ir.attachment'], False
-        for number, (order, part, _name, sub, attachment) in enumerate(jobs, start=1):
-            title = html_escape(attachment.name or '')
-            self.queue_info = _('Fichier %(number)s / %(total)s : %(name)s', number=number, total=len(jobs),
-                                name=attachment.name)
-            if not sub.file_type:
-                html += '<p class="text-warning"><b>%s</b> : %s</p>' % (title, html_escape(_(
-                    'type de fichier non reconnu, ignoré.')))
-                continue
-            if self.skip_done and sub._previous_log().state == 'done':
-                html += '<p class="text-muted"><b>%s</b> : %s</p>' % (title, html_escape(_(
-                    'déjà importé, ignoré.')))
-                done_attachments |= attachment
-                continue
-            self._commit()
-            try:
-                sub.with_context(yr_queue_wizard=self.id).action_import()
-            except Exception as error:  # noqa: BLE001 - the next files may depend on this one: stop, report
-                if self._can_commit():
-                    self.env.cr.rollback()
-                    self.env.invalidate_all()
-                _logger.exception('fastmag: échec du fichier %s', attachment.name)
-                message = error.args[0] if error.args else repr(error)
-                html += '<p class="text-danger"><b>%s</b> : %s</p>' % (title, html_escape(_(
-                    'échec, les fichiers suivants ne sont pas importés (%s). Relancez : les fichiers terminés sont '
-                    'passés, celui-ci reprend où il s\'est arrêté.', message)))
-                failed = True
-                break
-            html += '<h5>%s</h5>%s' % (title, sub.result or '')
-            done_attachments |= attachment
-        done_attachments.sudo().unlink()
-        self.write({'state': 'done', 'queue_info': False, 'result': html})
-        return {'type': 'ir.actions.act_window', 'name': _('Reprise fastmag'), 'res_model': self._name,
-                'res_id': self.id, 'view_mode': 'form', 'target': 'new'}
+            Queue.create({'name': attachment.name, 'attachment_id': attachment.id, 'options': options,
+                          'skip_done': self.skip_done, 'file_type': kind or False, 'type_order': order,
+                          'part': self._part_number(attachment.name)})
+        self.file_ids = [(5, 0, 0)]
+        self._commit()
+        Queue._trigger_cron()
+        action = self.env['ir.actions.act_window']._for_xml_id('yr_data_migration.action_yr_migration_queue')
+        action['target'] = 'current'
+        return action
 
     def _note(self, line, code, result, reason):
         """One line of the detailed report (Excel)."""

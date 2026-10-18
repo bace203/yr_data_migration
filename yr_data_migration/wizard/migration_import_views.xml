@@ -25,14 +25,15 @@
                                    decoration-success="file_type" placeholder="Non reconnu : choisissez"/>
                         </group>
                     </group>
-                    <group string="Ou plusieurs fichiers, importés l'un après l'autre" invisible="file">
-                        <field name="file_ids" widget="many2many_binary" nolabel="1" colspan="2"/>
+                    <group string="Ou plusieurs fichiers : file d'attente" invisible="file">
+                        <field name="file_ids" widget="yr_file_queue" nolabel="1" colspan="2"/>
                         <field name="skip_done" invisible="not file_ids"/>
                         <div class="text-muted" colspan="2" invisible="not file_ids">
-                            Ordre : magasins, articles, clients, puis ventes ; pour un même type, par numéro de
-                            partie du nom (ventes_partie_2 avant ventes_partie_10). Les options ci-dessous
-                            (détail des ventes, articles…) s'appliquent à tous les fichiers. Si un fichier échoue,
-                            les suivants ne sont pas importés : relancez, les fichiers terminés sont passés.
+                            Les fichiers sont envoyés un par un, puis importés l'un après l'autre en arrière-plan,
+                            sans que vous restiez devant l'écran : vous pouvez fermer la page. Ordre : magasins,
+                            articles, clients, puis ventes ; pour un même type, par numéro de partie du nom
+                            (ventes_partie_2 avant ventes_partie_10). Les options ci-dessous s'appliquent à tous les
+                            fichiers. Un fichier en échec n'arrête pas les autres : relancez-le depuis la file.
                         </div>
                     </group>
                     <field name="previous_import" invisible="not previous_import" nolabel="1"/>
@@ -83,7 +84,9 @@
                 </div>
                 <footer>
                     <button name="action_import" string="Importer" type="object" class="btn-primary"
-                            invisible="state != 'draft'"/>
+                            invisible="state != 'draft' or file_ids"/>
+                    <button name="action_import_queue" string="Mettre en file d'attente" type="object"
+                            class="btn-primary" invisible="state != 'draft' or not file_ids"/>
                     <button string="Fermer" class="btn-secondary" special="cancel"/>
                 </footer>
             </form>
@@ -99,6 +102,39 @@
     <menuitem id="menu_yr_migration_import" name="Reprise fastmag (magasins, articles, clients, ventes)"
               parent="loyalty_tier_marketing.menu_loyalty_tier_config" action="action_yr_migration_import"
               sequence="90"/>
+    <record id="yr_migration_queue_view_list" model="ir.ui.view">
+        <field name="name">yr.migration.queue.list</field>
+        <field name="model">yr.migration.queue</field>
+        <field name="arch" type="xml">
+            <list string="File d'attente des imports" create="false" decoration-danger="state == 'failed'"
+                  decoration-info="state == 'running'" decoration-muted="state in ('done', 'skipped')">
+                <field name="name"/>
+                <field name="file_type" optional="show"/>
+                <field name="part" optional="show"/>
+                <field name="state" widget="badge" decoration-info="state == 'running'"
+                       decoration-success="state == 'done'" decoration-danger="state == 'failed'"/>
+                <field name="label"/>
+                <field name="progress" widget="progressbar"/>
+                <field name="message"/>
+                <field name="log_id" optional="show"/>
+                <button name="action_retry" type="object" icon="fa-repeat" string="Relancer"
+                        invisible="state not in ('failed', 'skipped')"/>
+                <button name="action_cancel" type="object" icon="fa-trash" string="Retirer de la file"
+                        invisible="state not in ('pending', 'failed')"/>
+            </list>
+        </field>
+    </record>
+    <record id="action_yr_migration_queue" model="ir.actions.act_window">
+        <field name="name">File d'attente des imports</field>
+        <field name="res_model">yr.migration.queue</field>
+        <field name="view_mode">list</field>
+        <field name="help" type="html"><p class="o_view_nocontent_smiling_face">Aucun fichier en attente</p>
+            <p>Depuis « Reprise fastmag », déposez plusieurs fichiers puis « Mettre en file d'attente » : ils sont
+            importés l'un après l'autre en arrière-plan. Actualisez la page pour voir l'avancement.</p></field>
+    </record>
+    <menuitem id="menu_yr_migration_queue" name="File d'attente des imports fastmag"
+              parent="loyalty_tier_marketing.menu_loyalty_tier_config" action="action_yr_migration_queue"
+              sequence="91"/>
     <record id="yr_migration_log_view_list" model="ir.ui.view">
         <field name="name">yr.migration.log.list</field>
         <field name="model">yr.migration.log</field>

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<templates xml:space="preserve">
+    <t t-name="yr_data_migration.FileQueueField">
+        <div>
+            <label class="btn btn-secondary mb-2" t-if="!props.readonly">
+                <i class="fa fa-upload me-1"/> Ajouter des fichiers (un par un)
+                <input type="file" multiple="multiple" class="d-none" t-on-change="onChange"
+                       accept=".xlsx,.xlsm,.xls,.csv"/>
+            </label>
+            <ul class="list-unstyled mb-0">
+                <li t-foreach="files" t-as="file" t-key="file.id">
+                    <i class="fa fa-file-excel-o text-success me-1"/><t t-esc="file.name"/>
+                    <a t-if="!props.readonly" href="#" class="ms-2 text-danger" t-on-click.prevent="() => this.remove(file.id)">
+                        <i class="fa fa-times"/>
+                    </a>
+                </li>
+                <li t-foreach="state.sending" t-as="entry" t-key="entry_index">
+                    <t t-if="!entry.error"><i class="fa fa-spinner fa-spin me-1"/><t t-esc="entry.name"/> : envoi…</t>
+                    <t t-else=""><span class="text-danger"><i class="fa fa-exclamation-triangle me-1"/><t t-esc="entry.name"/> : <t t-esc="entry.error"/></span>
+                        <a href="#" class="ms-2" t-on-click.prevent="() => this.dismiss(entry)"><i class="fa fa-times"/></a></t>
+                </li>
+            </ul>
+        </div>
+    </t>
+</templates>

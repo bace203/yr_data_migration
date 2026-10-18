@@ -10,4 +10,14 @@
         <field name="interval_type">hours</field>
         <field name="active" eval="True"/>
     </record>
+    <!-- files waiting in the import queue, one after the other (also started at once by the import screen) -->
+    <record id="ir_cron_yr_migration_queue" model="ir.cron">
+        <field name="name">Reprise fastmag : file d'attente des imports</field>
+        <field name="model_id" ref="model_yr_migration_queue"/>
+        <field name="state">code</field>
+        <field name="code">model._cron_run()</field>
+        <field name="interval_number">10</field>
+        <field name="interval_type">minutes</field>
+        <field name="active" eval="True"/>
+    </record>
 </odoo>

@@ -770,8 +770,14 @@ class TestMigrationImport(TransactionCase):
             return Attachment.create({'name': name, 'datas': xlsx(rows)})
         files = part('ventes_partie_10.xlsx', 7199201) | part('ventes_partie_2.xlsx', 7199202)
         wizard = self.env['yr.migration.import'].create({'file_ids': [(6, 0, files.ids)]})
-        wizard.action_import()
-        self.assertEqual(wizard.state, 'done')
+        wizard.action_import()                          # only puts the files in the queue
+        Queue = self.env['yr.migration.queue']
+        self.assertEqual(Queue.search([]).mapped('state'), ['pending', 'pending'])
+        self.assertEqual(Queue.search([]).mapped('name'), ['ventes_partie_2.xlsx', 'ventes_partie_10.xlsx'])
+        Queue._cron_run()                               # one file per run, in the background
+        self.assertEqual(Queue.search([('state', '=', 'done')]).mapped('name'), ['ventes_partie_2.xlsx'])
+        Queue._cron_run()
+        self.assertEqual(set(Queue.search([]).mapped('state')), {'done'})
         logs = self.env['yr.migration.log'].search([('name', 'like', 'ventes_partie_')], order='id')
         self.assertEqual(logs.mapped('name'), ['ventes_partie_2.xlsx', 'ventes_partie_10.xlsx'])
         self.assertEqual(self.env['yr.legacy.sale.line'].search_count([('ticket', 'in', ['7199201', '7199202'])]), 2)
