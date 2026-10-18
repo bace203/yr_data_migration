@@ -10,11 +10,13 @@
                 <widget name="yr_import_progress"/>
                 <div invisible="state != 'draft'">
                     <p class="text-muted">
-                        Choisissez un fichier fastmag : il est reconnu tout seul. Ordre conseillé :
-                        <b>magasins</b> (et vendeurs), <b>articles</b>, <b>clients</b> (2017-2026 puis ancien système),
-                        <b>liste client</b> (codes Y…), puis <b>CA clients</b> et <b>détail des ventes</b>.
-                        Un fichier peut être réimporté : rien n'est créé en double. Un client sans vrai numéro de
-                        carte fidélité n'est pas importé. Après chaque import : résumé et rapport détaillé (Excel).
+                        Choisissez un fichier : il est reconnu tout seul. Ordre conseillé :
+                        <b>magasins</b> (et vendeurs), <b>articles</b> (fichier Sage X3),
+                        <b>clients</b> (fichier « Liste des clients détail »), puis <b>détail des ventes</b>.
+                        Les anciens formats (articles fastmag, clients 2017-2026 / ancien système, liste des codes Y,
+                        CA clients) sont toujours acceptés. Un fichier peut être réimporté : rien n'est créé en
+                        double. Un client sans vrai numéro de carte fidélité n'est pas importé, les coupons du détail
+                        des ventes sont ignorés. Après chaque import : résumé et rapport détaillé (Excel).
                     </p>
                     <group>
                         <group>
