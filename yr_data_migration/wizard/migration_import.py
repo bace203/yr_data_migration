@@ -274,9 +274,9 @@ def client_code(value):
 
 
 def is_coupon(item):
-    """A coupon line: the word « coupon » in its label. Codes (Y13051967…) are not a criterion: some free products
-    carry such codes."""
-    return 'coupon' in norm(item.get('name'))
+    """A coupon line: the word « coupon » in its label (or reference / motif). Codes (Y13051967…) are not a
+    criterion: some free products carry such codes."""
+    return any('coupon' in norm(item.get(key)) for key in ('name', 'ref', 'ean', 'reason'))
 
 
 def is_xls(content):
@@ -657,6 +657,7 @@ class YrMigrationImport(models.TransientModel):
             'sellers_updated': _('Vendeurs mis à jour'), 'closed': _('Magasins fermés (archivés)'),
             'companies': _('Sociétés (filiales) créées'), 'pos': _('Points de vente (caisses) créés'),
             'already': _('Lignes déjà importées (reprise : non refaites)'),
+            'added_to_known': _('Lignes manquantes ajoutées à des ventes déjà importées'),
             'coupons': _('Lignes de coupon / bon d\'achat (non importées)'),
             'coupon_articles': _('Articles « bon d\'achat » (non importés)'),
             'no_card': _('Clients sans vrai n° de carte fidélité (non importés)'),
@@ -1507,6 +1508,15 @@ class YrMigrationImport(models.TransientModel):
             return DEDUCED_REASON
         return ''
 
+    @staticmethod
+    def _line_name(item, product):
+        """Label of a sale line; an unknown article gets « name / barcode » (or reference) to be diagnosed."""
+        name = text(item.get('name'))
+        if product or item.get('stamp'):
+            return name
+        code = text(item.get('ean')) or text(item.get('ref'))
+        return ' / '.join(part for part in (name, code) if part)
+
     def _import_sales_detail(self, stats, errors):
         SaleLine = self.env['yr.legacy.sale.line'].sudo()
         stores = self._stores()
@@ -1522,12 +1532,12 @@ class YrMigrationImport(models.TransientModel):
                 errors.append((item['_line'], ticket, _('magasin, n° de vente ou date manquant')))
                 continue
             stats['rows'] += 1
+            rank[(shop, ticket)] += 1               # position in the file: stable whatever lines are left out
             if is_coupon(item):
                 stats['coupons'] += 1
                 self._note(item['_line'], ticket, _('Non importé'), _(
                     'ligne de coupon / bon d\'achat (%s) : les coupons ne sont pas repris', text(item.get('ref'))))
                 continue
-            rank[(shop, ticket)] += 1
             item.update(shop=shop, ticket=ticket, day=day, sequence=rank[(shop, ticket)])
             ref = text(item.get('ref'))
             item['stamp'] = ref.upper() in STAMP_REFS
@@ -1544,18 +1554,33 @@ class YrMigrationImport(models.TransientModel):
             products.setdefault(('ref', product.default_code), product)
             products.setdefault(('ean', product.barcode), product)
         # lines already imported: only their key, id and order (never whole records: millions of lines)
-        existing = {}
+        existing = defaultdict(list)                    # (shop, ticket) → [(sequence, id, order, article key)]
         keys = list(tickets)
         for start in range(0, len(keys), 20000):
             chunk = keys[start:start + 20000]
             self.env.cr.execute(SQL("""
-                SELECT l.shop_code, l.ticket, l.sequence, l.id, l.pos_order_id
+                SELECT l.shop_code, l.ticket, l.sequence, l.id, l.pos_order_id, l.product_ref, l.barcode
                   FROM yr_legacy_sale_line l
                   JOIN unnest(%s::varchar[], %s::varchar[]) AS k(shop, ticket)
                     ON l.shop_code = k.shop AND l.ticket = k.ticket
+                 ORDER BY l.sequence, l.id
             """, [shop for shop, _ticket in chunk], [ticket for _shop, ticket in chunk]))
-            for shop, ticket, sequence, line_id, order_id in self.env.cr.fetchall():
-                existing[(shop, ticket, sequence)] = (line_id, order_id)
+            for shop, ticket, sequence, line_id, order_id, line_ref, line_ean in self.env.cr.fetchall():
+                existing[(shop, ticket)].append((sequence, line_id, order_id, (line_ref or '', line_ean or '')))
+        # a line is found again by its article (the nth time it comes in the ticket), not by its position: the
+        # position moves when lines were left out (coupons) or missing at the first import
+        free = {}                                       # (shop, ticket) → sequences taken
+        pending = {}                                    # (shop, ticket, article key, nth) → existing line
+        for ticket_key, lines in existing.items():
+            free[ticket_key] = {line[0] for line in lines}
+            nth = defaultdict(int)
+            for line in lines:
+                nth[line[3]] += 1
+                pending[ticket_key + (line[3], nth[line[3]])] = line
+                if line[3] == ('', ''):                 # nothing to recognise it by: found again by its position
+                    pending[ticket_key + (line[0],)] = line
+        ticket_has_order = {key for key, lines in existing.items() if any(line[2] for line in lines)}
+        seen_nth = defaultdict(int)
 
         def employee(name, create, store):
             key = ' '.join(name.upper().split())
@@ -1569,7 +1594,7 @@ class YrMigrationImport(models.TransientModel):
 
         mapped = self.env['yr.client.code'].sudo()._cards_for(
             {client_code(i.get('fm_id')) for i in items if not card_number(i.get('card'))} - {''})
-        unmapped, sellers_seen, cashiers_seen, unknown_refs = defaultdict(int), set(), set(), defaultdict(int)
+        unmapped, sellers_seen, cashiers_seen, unknown_refs = defaultdict(int), set(), set(), {}
         visits, to_create, cards, changed_tickets = {}, [], set(), set()
         codes_seen = set()
         done = 0
@@ -1596,7 +1621,8 @@ class YrMigrationImport(models.TransientModel):
             product = False if item['stamp'] else products.get(('ref', ref)) or products.get(('ean', ean))
             if not item['stamp'] and not product:
                 stats['unknown_products'] += 1
-                unknown_refs[ref or ean] += 1
+                count = unknown_refs.get(ref or ean, (0,))[0]
+                unknown_refs[ref or ean] = (count + 1, text(item.get('name')), ean)
             total = number(item.get('total')) or 0.0
             cashier, seller = text(item.get('cashier')), text(item.get('seller'))
             sellers_seen.add(seller.upper())
@@ -1610,25 +1636,40 @@ class YrMigrationImport(models.TransientModel):
                 'seller_name': seller or False, 'seller_id': employee(seller, self.create_sellers, store),
                 'card': card or False, 'legacy_client_id': code or False,
                 'product_ref': ref or False, 'barcode': ean or False, 'product_id': product.id if product else False,
-                'name': text(item.get('name')) or False, 'axe': text(item.get('axe')) or False,
+                'name': self._line_name(item, product) or False, 'axe': text(item.get('axe')) or False,
                 'product_line': text(item.get('line')) or False, 'is_stamp': item['stamp'],
                 'qty': number(item.get('qty')) or 0.0, 'price_unit': number(item.get('price')) or 0.0,
                 'discount': number(item.get('discount')) or 0.0, 'amount': total,
                 'reason': text(item.get('reason')) or self._deduced_reason(item) or False, 'comment': text(item.get('comment')) or False,
             }
-            found = existing.get((item['shop'], item['ticket'], item['sequence']))
+            ticket_key = (item['shop'], item['ticket'])
+            article = (ref, ean)
+            seen_nth[ticket_key + article] += 1
+            found = pending.pop(ticket_key + (article, seen_nth[ticket_key + article]), None)
+            if not found:
+                found = pending.pop(ticket_key + (item['sequence'],), None)
+            if found:
+                vals['sequence'] = found[0]             # the line keeps its place
+            else:
+                taken = free.setdefault(ticket_key, set())
+                if vals['sequence'] in taken:
+                    vals['sequence'] = max(taken) + 1
+                taken.add(vals['sequence'])
             if found and self.env.context.get('yr_resume'):
                 stats['already'] += 1                   # saved before the interruption
             elif found:
-                SaleLine.browse(found[0]).write(vals)
+                SaleLine.browse(found[1]).write(vals)
                 stats['updated'] += 1
-                if found[1]:
-                    changed_tickets.add('%s/%s' % (item['shop'], item['ticket']))
+                if found[2]:
+                    changed_tickets.add('%s/%s' % ticket_key)
                 if stats['updated'] % 5000 == 0:
                     SaleLine.flush_model()
                     SaleLine.invalidate_model()         # keeps the memory flat on a big re-import
             else:
                 to_create.append(vals)
+                stats['added_to_known'] += 1 if ticket_key in existing else 0
+                if ticket_key in ticket_has_order:      # a missing line: the POS order is made again with it
+                    changed_tickets.add('%s/%s' % ticket_key)
             if card:
                 cards.add(card)
                 key = (card, datetime.combine(item['day'], datetime.min.time()).replace(hour=12), item['shop'])
@@ -1648,8 +1689,10 @@ class YrMigrationImport(models.TransientModel):
             self._note('-', code, _('Vente sans client'), _(
                 '%s ligne(s) : code client sans carte connue (importez la « Liste client » : elles seront '
                 'rattachées)', count))
-        for ref, count in sorted(unknown_refs.items()):
-            self._note('-', ref, _('Article inconnu'), _('%s ligne(s) gardée(s) sans article', count))
+        for ref, (count, name, ean) in sorted(unknown_refs.items()):
+            self._note('-', ref, _('Article inconnu'), _(
+                '%(count)s ligne(s) gardée(s) sans article : %(name)s / %(code)s',
+                count=count, name=name or '?', code=ean or ref))
         for shop in sorted(stats.get('stores_missing') or ()):
             self._note('-', shop, _('Magasin inconnu'), _('ventes gardées sans magasin'))
         if changed_tickets:

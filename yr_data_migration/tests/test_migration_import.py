@@ -739,6 +739,27 @@ class TestMigrationImport(TransactionCase):
                                                   25, 15)], deduce_motif=False)
         self.assertFalse(self.env['yr.legacy.sale.line'].search([('ticket', '=', '7199021')]).motif_id)
 
+    def test_reimport_completes_and_updates_lines(self):
+        day = datetime.combine(date.today() - timedelta(days=3), datetime.min.time())
+        Line = self.env['yr.legacy.sale.line']
+        self._import([DETAIL_HEADER,
+                      self._detail(7199101, day, 'RIM', 'VEND', None, 'ZZ1', 3660009560001, 'CRAYON', 1, 23, 0, 23)])
+        first = Line.search([('ticket', '=', '7199101')])
+        self.assertEqual(len(first), 1)
+        self.assertEqual(first.name, 'CRAYON / 3660009560001')          # unknown article: name / barcode
+        # second import: a coupon in front and a line that was missing; the known line is updated, not doubled
+        wizard = self._import([DETAIL_HEADER,
+                               self._detail(7199101, day, 'RIM', 'VEND', None, 'Y13051967', None, 'COUPON', 1, 10, 100, 0),
+                               self._detail(7199101, day, 'RIM', 'VEND', None, 'ZZ1', 3660009560001, 'CRAYON', 2, 23, 0, 46),
+                               self._detail(7199101, day, 'RIM', 'VEND', None, 'ZZ2', 3660009560002, 'CREME', 1, 18, 0, 18)])
+        lines = Line.search([('ticket', '=', '7199101')])
+        self.assertEqual(len(lines), 2)
+        self.assertIn(first, lines)
+        self.assertEqual(first.qty, 2)
+        self.assertEqual(len(set(lines.mapped('sequence'))), 2)
+        self.assertEqual(sorted(lines.mapped('product_ref')), ['ZZ1', 'ZZ2'])
+        self.assertIn('manquantes', wizard.result)
+
     def test_coupons_skipped_and_motifs(self):
         day = datetime.combine(date.today() - timedelta(days=2), datetime.min.time())
         rows = [DETAIL_HEADER,
@@ -804,7 +825,7 @@ class TestMigrationImport(TransactionCase):
         self.assertEqual((ticket.partner_id, ticket.amount_total, len(ticket.lines)), (wael, 46.0, 2))
         self.assertEqual((ticket.yr_seller_name, ticket.yr_cashier_name), ('SLIMENI POS', 'RIM'))
         self.assertEqual(ticket.date_order.date(), day.date())
-        unknown = ticket.lines.filtered(lambda l: l.full_product_name == 'CREME')
+        unknown = ticket.lines.filtered(lambda l: l.full_product_name.startswith('CREME'))
         self.assertEqual(unknown.product_id.default_code, 'FASTMAG-INCONNU')
         self.assertEqual(ticket.lines.filtered(lambda l: l.qty == 2).product_id, product)
         self.assertFalse(orders.picking_ids)
