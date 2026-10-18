@@ -673,6 +673,20 @@ class TestMigrationImport(TransactionCase):
         self.assertEqual(self.env['product.template'].search([('default_code', '=', 'XLS100')]).yr_brand,
                          'YVES ROCHER')
 
+    def test_several_motifs_follow_the_setting(self):
+        day = datetime.combine(date.today() - timedelta(days=2), datetime.min.time())
+        icp = self.env['ir.config_parameter'].sudo()
+        for rule, ticket, expected in (('all', 7199010, ['CADEAU_PTS', 'ECHANGE']), ('first', 7199011, ['ECHANGE'])):
+            icp.set_param('loyalty_tier_marketing.allocation_rule', rule)
+            self._import([DETAIL_HEADER, self._detail(ticket, day, 'RIM', 'VEND', None, 'ZM1', 3660009561001,
+                                                      'CRAYON', 1, 23, 0, 23, 'ECHANGE ; CADEAU_PTS')])
+            self.env['yr.legacy.sale.line']._yr_make_pos_orders()
+            order = self.env['pos.order'].search([('yr_fastmag_ticket', '=', 'YR_YOUG/%s' % ticket)])
+            self.assertEqual(sorted(order.lines.crm_motif_ids.mapped('name')), expected)
+            self.assertEqual(order.lines.crm_motif_id.name, 'ECHANGE')
+            view = self.env['loyalty.crm.order.line'].search([('order_id.reference', 'ilike', str(ticket))])
+            self.assertEqual(view.motif_names, ' ; '.join(expected))
+
     def test_coupons_skipped_and_motifs(self):
         day = datetime.combine(date.today() - timedelta(days=2), datetime.min.time())
         rows = [DETAIL_HEADER,

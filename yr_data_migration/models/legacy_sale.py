@@ -66,23 +66,43 @@ class YrLegacySaleLine(models.Model):
 
     @api.model
     @api.model
+    def _motif_chain(self, reason):
+        """Motifs of a reason typed « A ; B » : all of them when the setting « Ticket avec plusieurs offres » counts
+        every campaign, else only the first."""
+        Motif = self.env['loyalty.motif'].sudo()
+        motifs = [Motif._for_name(name) for name in (reason or '').split(';')]
+        motifs = [m for m in motifs if m]
+        rule = self.env['ir.config_parameter'].sudo().get_param('loyalty_tier_marketing.allocation_rule', 'first')
+        return motifs if rule == 'all' else motifs[:1]
+
+    @api.model
     def _link_motifs(self):
-        """Lines with a reason in the file but no motif yet: the motif of that name is created (generic) and linked,
-        also on the POS order lines already created."""
+        """Lines with a reason in the file but no motif yet: each motif of the reason (several separated by « ; »)
+        is created (generic) and linked; the first is the main one. Also on the POS order lines already created."""
         cr = self.env.cr
         cr.execute("SELECT DISTINCT reason FROM yr_legacy_sale_line WHERE motif_id IS NULL AND reason IS NOT NULL")
         for (reason,) in cr.fetchall():
-            motif = self.env['loyalty.motif'].sudo()._for_name(reason)
-            if motif:
-                cr.execute("UPDATE yr_legacy_sale_line SET motif_id = %s WHERE motif_id IS NULL AND reason = %s",
-                           [motif.id, reason])
+            motifs = self._motif_chain(reason)
+            if not motifs:
+                continue
+            cr.execute("UPDATE yr_legacy_sale_line SET motif_id = %s WHERE motif_id IS NULL AND reason = %s",
+                       [motifs[0].id, reason])
+            cr.execute("SELECT id FROM yr_legacy_sale_line WHERE motif_id = %s AND reason = %s", [motifs[0].id, reason])
+            line_ids = [row[0] for row in cr.fetchall()]
+            for start in range(0, len(line_ids), 20000):
+                cr.execute("""
+                    INSERT INTO pos_line_motif_rel (line_id, motif_id)
+                    SELECT pl.id, m FROM pos_order_line pl, unnest(%s::int[]) AS m
+                     WHERE pl.yr_fastmag_line_id = ANY(%s)
+                    ON CONFLICT DO NOTHING
+                """, [[m.id for m in motifs], line_ids[start:start + 20000]])
         cr.execute("""
             UPDATE pos_order_line pl SET crm_motif_id = l.motif_id
               FROM yr_legacy_sale_line l
              WHERE pl.yr_fastmag_line_id = l.id AND l.motif_id IS NOT NULL AND pl.crm_motif_id IS NULL
         """)
         self.invalidate_model(['motif_id'])
-        self.env['pos.order.line'].invalidate_model(['crm_motif_id'])
+        self.env['pos.order.line'].invalidate_model(['crm_motif_id', 'crm_motif_ids'])
 
     def _link_partners(self, cards=None):
         self.flush_model()
@@ -318,6 +338,9 @@ class YrLegacySaleLine(models.Model):
         for row in cr.dictfetchall():
             if (row['shop_code'], row['ticket']) in keys:
                 tickets[(row['shop_code'], row['ticket'])].append(row)
+        cr.execute("SELECT DISTINCT motif_id, reason FROM yr_legacy_sale_line WHERE motif_id = ANY(%s)",
+                   [list({r['motif_id'] for rows in tickets.values() for r in rows if r['motif_id']})])
+        motif_sets = {mid: [m.id for m in self._motif_chain(reason)] or [mid] for mid, reason in cr.fetchall()}
         unknown, stamp = self._yr_special_products()
         stores = {store.id: store for store in self.env['loyalty.store'].sudo().with_context(active_test=False)
                   .browse({rows[0]['store_id'] for rows in tickets.values()})}
@@ -348,6 +371,7 @@ class YrLegacySaleLine(models.Model):
                     'price_subtotal': r['amount'] or 0.0, 'price_subtotal_incl': r['amount'] or 0.0,
                     'tax_ids': [(6, 0, [])], 'yr_fastmag_line_id': r['id'],
                     'crm_motif_id': r['motif_id'] or False,
+                    'crm_motif_ids': [(6, 0, motif_sets.get(r['motif_id'], [r['motif_id']] if r['motif_id'] else []))],
                 }) for r in rows],
             }
             if has_employee:
