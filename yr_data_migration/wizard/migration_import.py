@@ -327,7 +327,16 @@ class YrMigrationImport(models.TransientModel):
     _name = 'yr.migration.import'
     _description = 'Import fastmag'
 
-    file = fields.Binary('Fichier Excel ou CSV', required=True)
+    file = fields.Binary('Fichier Excel ou CSV')
+    file_ids = fields.Many2many(
+        'ir.attachment', 'yr_migration_import_attachment_rel', 'wizard_id', 'attachment_id', 'Plusieurs fichiers',
+        help='Les fichiers sont importés l\'un après l\'autre : d\'abord par type (magasins, articles, clients, '
+             'ventes), puis par numéro de partie du nom (ventes_partie_2 avant ventes_partie_10).')
+    skip_done = fields.Boolean(
+        'Ignorer les fichiers déjà importés', default=True,
+        help='Un fichier déjà importé en entier (même contenu) est passé. Décochez pour le réimporter : les lignes '
+             'sont mises à jour, sans doublon.')
+    queue_info = fields.Char(readonly=True)
     filename = fields.Char()
     file_type = fields.Selection(FILE_TYPES, 'Type de fichier', compute='_compute_file_type', store=True,
                                  readonly=False, help='Reconnu automatiquement d\'après les en-têtes.')
@@ -440,7 +449,8 @@ class YrMigrationImport(models.TransientModel):
         log = self.sudo().log_id
         if not log:
             return {}
-        return {'state': log.state, 'done': log.done, 'total': log.total, 'label': log.label or '',
+        label = '%s — %s' % (self.sudo().queue_info, log.label or '') if self.sudo().queue_info else log.label or ''
+        return {'state': log.state, 'done': log.done, 'total': log.total, 'label': label,
                 'progress': log.progress}
 
     # ── reading ──────────────────────────────────────────────────────────
@@ -560,6 +570,10 @@ class YrMigrationImport(models.TransientModel):
     # ── entry point ──────────────────────────────────────────────────────
     def action_import(self):
         self.ensure_one()
+        if not self.file and self.file_ids:
+            return self.action_import_queue()
+        if not self.file:
+            raise UserError(_('Choisissez un fichier.'))
         if not self.file_type:
             raise UserError(_('Type de fichier non reconnu : choisissez-le dans la liste.'))
         previous = self._previous_log()
@@ -569,6 +583,9 @@ class YrMigrationImport(models.TransientModel):
             'name': self.filename or _('Fichier'), 'file_hash': self._file_hash(), 'file_type': self.file_type})
         log.write({'state': 'running', 'label': _('Démarrage'), 'user_id': self.env.uid})
         self.log_id = log
+        queue = self.browse(self.env.context.get('yr_queue_wizard') or [])
+        if queue:
+            queue.log_id = log               # the bar of the queue screen follows the file being imported
         self._commit()                       # the screen can follow the progress from now on
         env = self.with_context(tracking_disable=True, mail_create_nolog=True, mail_notrack=True,
                                 yr_migration_force=True, yr_resume=resume, yr_progress_clock=[0], yr_cache={},
@@ -611,6 +628,64 @@ class YrMigrationImport(models.TransientModel):
                    'done': max(log.done, log.total), 'report_filename': report_name,
                    'report_file': base64.b64encode(self._report_xlsx(summary, notes))})
         self.write({'state': 'done', 'result': result})
+        return {'type': 'ir.actions.act_window', 'name': _('Reprise fastmag'), 'res_model': self._name,
+                'res_id': self.id, 'view_mode': 'form', 'target': 'new'}
+
+    # ── several files, one after the other ───────────────────────────────
+    OPTIONS = ('create_categories', 'update_prices', 'archive_inactive', 'create_pos_orders', 'deduce_motif',
+               'import_no_card', 'create_sellers', 'update_purchases', 'store_companies', 'store_pos',
+               'year_2000_unknown', 'update_existing')
+
+    @staticmethod
+    def _part_number(filename):
+        """Part number of a file name: the number after « part / partie / p », else the last number."""
+        stem = re.sub(r'\.\w+$', '', filename or '')
+        found = re.findall(r'(?:parti?e?|pt|p)[\s._-]*(\d+)', stem, re.I) or re.findall(r'(\d+)', stem)
+        return int(found[-1]) if found else 0
+
+    def action_import_queue(self):
+        """Imports the chosen files one by one: by file type (the order the data needs), then by part number."""
+        self.ensure_one()
+        options = {name: self[name] for name in self.OPTIONS}
+        jobs = []
+        for attachment in self.file_ids:
+            sub = self.create(dict(options, file=attachment.datas, filename=attachment.name))
+            kind = sub.file_type
+            order = SHEET_ORDER.index(kind) if kind in SHEET_ORDER else (-1 if kind == 'workbook' else len(SHEET_ORDER))
+            jobs.append((order, self._part_number(attachment.name), (attachment.name or '').lower(), sub, attachment))
+        jobs.sort(key=lambda job: job[:3])
+        html, done_attachments, failed = '', self.env['ir.attachment'], False
+        for number, (order, part, _name, sub, attachment) in enumerate(jobs, start=1):
+            title = html_escape(attachment.name or '')
+            self.queue_info = _('Fichier %(number)s / %(total)s : %(name)s', number=number, total=len(jobs),
+                                name=attachment.name)
+            if not sub.file_type:
+                html += '<p class="text-warning"><b>%s</b> : %s</p>' % (title, html_escape(_(
+                    'type de fichier non reconnu, ignoré.')))
+                continue
+            if self.skip_done and sub._previous_log().state == 'done':
+                html += '<p class="text-muted"><b>%s</b> : %s</p>' % (title, html_escape(_(
+                    'déjà importé, ignoré.')))
+                done_attachments |= attachment
+                continue
+            self._commit()
+            try:
+                sub.with_context(yr_queue_wizard=self.id).action_import()
+            except Exception as error:  # noqa: BLE001 - the next files may depend on this one: stop, report
+                if self._can_commit():
+                    self.env.cr.rollback()
+                    self.env.invalidate_all()
+                _logger.exception('fastmag: échec du fichier %s', attachment.name)
+                message = error.args[0] if error.args else repr(error)
+                html += '<p class="text-danger"><b>%s</b> : %s</p>' % (title, html_escape(_(
+                    'échec, les fichiers suivants ne sont pas importés (%s). Relancez : les fichiers terminés sont '
+                    'passés, celui-ci reprend où il s\'est arrêté.', message)))
+                failed = True
+                break
+            html += '<h5>%s</h5>%s' % (title, sub.result or '')
+            done_attachments |= attachment
+        done_attachments.sudo().unlink()
+        self.write({'state': 'done', 'queue_info': False, 'result': html})
         return {'type': 'ir.actions.act_window', 'name': _('Reprise fastmag'), 'res_model': self._name,
                 'res_id': self.id, 'view_mode': 'form', 'target': 'new'}
 

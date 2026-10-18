@@ -19,19 +19,29 @@
                     </p>
                     <group>
                         <group>
-                            <field name="file" filename="filename"/>
+                            <field name="file" filename="filename" invisible="file_ids"/>
                             <field name="filename" invisible="1"/>
                             <field name="file_type" invisible="not file"
                                    decoration-success="file_type" placeholder="Non reconnu : choisissez"/>
                         </group>
                     </group>
+                    <group string="Ou plusieurs fichiers, importés l'un après l'autre" invisible="file">
+                        <field name="file_ids" widget="many2many_binary" nolabel="1" colspan="2"/>
+                        <field name="skip_done" invisible="not file_ids"/>
+                        <div class="text-muted" colspan="2" invisible="not file_ids">
+                            Ordre : magasins, articles, clients, puis ventes ; pour un même type, par numéro de
+                            partie du nom (ventes_partie_2 avant ventes_partie_10). Les options ci-dessous
+                            (détail des ventes, articles…) s'appliquent à tous les fichiers. Si un fichier échoue,
+                            les suivants ne sont pas importés : relancez, les fichiers terminés sont passés.
+                        </div>
+                    </group>
                     <field name="previous_import" invisible="not previous_import" nolabel="1"/>
-                    <group invisible="file_type != 'article'" string="Articles">
+                    <group invisible="not file_ids and file_type != 'article'" string="Articles">
                         <field name="create_categories"/>
                         <field name="update_prices"/>
                         <field name="archive_inactive"/>
                     </group>
-                    <group invisible="file_type != 'sales_detail'" string="Détail des ventes">
+                    <group invisible="not file_ids and file_type != 'sales_detail'" string="Détail des ventes">
                         <field name="create_pos_orders"/>
                         <field name="deduce_motif"/>
                         <field name="import_no_card"/>
@@ -44,7 +54,7 @@
                         <span invisible="file_type != 'workbook'">Toutes les feuilles reconnues sont importées,
                         les magasins d'abord.</span>
                     </div>
-                    <group invisible="file_type not in ('stores', 'workbook')" string="Magasins">
+                    <group invisible="not file_ids and file_type not in ('stores', 'workbook')" string="Magasins">
                         <field name="store_companies"/>
                         <field name="store_pos"/>
                     </group>
@@ -63,7 +73,7 @@
                         même s'ils ne correspondent à aucun employé. Sans carte fidélité, le client est retrouvé
                         par son code client (Y…) grâce à la « Liste client ».
                     </div>
-                    <group invisible="file_type not in ('client_new', 'client_old')" string="Clients">
+                    <group invisible="not file_ids and file_type not in ('client_new', 'client_old')" string="Clients">
                         <field name="update_existing"/>
                         <field name="year_2000_unknown" invisible="file_type != 'client_old'"/>
                     </group>

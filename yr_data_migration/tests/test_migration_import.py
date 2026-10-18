@@ -760,6 +760,23 @@ class TestMigrationImport(TransactionCase):
         self.assertEqual(sorted(lines.mapped('product_ref')), ['ZZ1', 'ZZ2'])
         self.assertIn('manquantes', wizard.result)
 
+    def test_several_files_in_part_order(self):
+        day = datetime.combine(date.today() - timedelta(days=4), datetime.min.time())
+        Attachment = self.env['ir.attachment']
+
+        def part(name, ticket):
+            rows = [DETAIL_HEADER, self._detail(ticket, day, 'RIM', 'VEND', None, 'ZZ1', 3660009560001, 'CRAYON',
+                                                1, 23, 0, 23)]
+            return Attachment.create({'name': name, 'datas': xlsx(rows)})
+        files = part('ventes_partie_10.xlsx', 7199201) | part('ventes_partie_2.xlsx', 7199202)
+        wizard = self.env['yr.migration.import'].create({'file_ids': [(6, 0, files.ids)]})
+        wizard.action_import()
+        self.assertEqual(wizard.state, 'done')
+        logs = self.env['yr.migration.log'].search([('name', 'like', 'ventes_partie_')], order='id')
+        self.assertEqual(logs.mapped('name'), ['ventes_partie_2.xlsx', 'ventes_partie_10.xlsx'])
+        self.assertEqual(self.env['yr.legacy.sale.line'].search_count([('ticket', 'in', ['7199201', '7199202'])]), 2)
+        self.assertFalse(files.exists())               # the uploaded files are removed once imported
+
     def test_coupons_skipped_and_motifs(self):
         day = datetime.combine(date.today() - timedelta(days=2), datetime.min.time())
         rows = [DETAIL_HEADER,
