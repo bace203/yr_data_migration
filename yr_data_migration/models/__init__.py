@@ -10,3 +10,4 @@ from . import legacy_sale
 from . import migration_log
 from . import client_code
 from . import res_config_settings
+from . import forecast_dimensions

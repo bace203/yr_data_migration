@@ -148,7 +148,7 @@ class TestMigrationImport(TransactionCase):
         crm.action_import()
         tmpl = self.env['product.template'].search([('default_code', '=', 'T100102999')])
         self.assertEqual((tmpl.yr_line, tmpl.yr_sub_axe_id.name, tmpl.yr_brand), ('CN3', 'TEINT TEST', 'YVES ROCHER'))
-        self.assertIn('Articles (ancien format fastmag', crm.result)
+        self.assertIn('Articles (ancien format', crm.result)
         # an ordinary article file keeps the CRM import
         other = self.env['loyalty.product.import'].create({
             'file': base64.b64encode('Code article;Désignation;Prix\nTX1;Autre;3\n'.encode()), 'filename': 'a.csv'})

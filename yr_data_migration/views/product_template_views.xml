@@ -6,7 +6,7 @@
         <field name="inherit_id" ref="product.product_template_form_view"/>
         <field name="arch" type="xml">
             <xpath expr="//notebook" position="inside">
-                <page string="Fiche fastmag" name="yr_fastmag">
+                <page string="Fiche article" name="yr_fastmag">
                     <group>
                         <group>
                             <field name="yr_axe_id" options="{'no_create': True}"/>

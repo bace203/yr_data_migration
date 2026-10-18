@@ -11,7 +11,7 @@
                 <div invisible="state != 'draft'">
                     <p class="text-muted">
                         Choisissez un fichier : il est reconnu tout seul. Ordre conseillé :
-                        <b>magasins</b> (et vendeurs), <b>articles</b> (fichier Sage X3),
+                        <b>magasins</b> (et vendeurs), <b>articles</b> (fichier « Liste des articles »),
                         <b>clients</b> (fichier « Liste des clients détail »), puis <b>détail des ventes</b>.
                         Un fichier peut être réimporté : rien n'est créé en
                         double. Un client sans vrai numéro de carte fidélité n'est pas importé, les coupons du détail

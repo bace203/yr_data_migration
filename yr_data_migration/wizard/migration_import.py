@@ -22,9 +22,9 @@ from odoo.tools import SQL, html_escape
 
 BATCH = 500
 FILE_TYPES = [
-    ('article_sage', 'Articles Sage X3 (Article, Catégori, Code à barre…)'),
+    ('article_sage', 'Articles (Article, Catégori, Code à barre, Axe, Sous Axe, Nature…)'),
     ('client_detail', 'Clients détail (Client, CarteFidelite, Civilite…)'),
-    ('article', 'Articles (ancien format fastmag, remplacé par Sage X3)'),
+    ('article', 'Articles (ancien format, remplacé par le fichier Articles)'),
     ('client_new', 'Clients 2017-2026 (ancien format, remplacé par « Clients détail »)'),
     ('client_old', 'Clients ancien système (ancien format, remplacé par « Clients détail »)'),
     ('client_codes', 'Codes clients fastmag (CodeClient Y…, carte fidélité)'),
