@@ -658,12 +658,13 @@ class TestMigrationImport(TransactionCase):
                 self._detail(7199001, day, 'RIM', 'VEND', None, 'ZZ1', 3660009560001, 'CRAYON', 1, 23, 0, 23,
                              'ECHANGE'),
                 self._detail(7199001, day, 'RIM', 'VEND', None, 'Y13051967', None, 'COUPON', 1, 10, 100, 0),
-                self._detail(7199001, day, 'RIM', 'VEND', None, '100000000', None, "BON D'ACHAT", 1, 10, 0, 10),
+                self._detail(7199001, day, 'RIM', 'VEND', None, '100000000', None, "BON D'ACHAT", 1, 10, 100, 0),
+                self._detail(7199001, day, 'RIM', 'VEND', None, 'Y88074', 3660009560003, 'ARTICLE Y', 1, 12, 0, 12),
                 self._detail(7199001, day, 'RIM', 'VEND', None, 'ZZ2', 3660009560002, 'CREME', 1, 18, 100, 0,
                              'CADEAU_PTS')]
         wizard = self._import(rows)
         lines = self.env['yr.legacy.sale.line'].search([('ticket', '=', '7199001')])
-        self.assertEqual(sorted(lines.mapped('product_ref')), ['ZZ1', 'ZZ2'])
+        self.assertEqual(sorted(lines.mapped('product_ref')), ['Y88074', 'ZZ1', 'ZZ2'])      # only the coupons are left out
         self.assertIn('coupon', wizard.result.lower())
         motifs = lines.mapped('motif_id')
         self.assertEqual(sorted(motifs.mapped('name')), ['CADEAU_PTS', 'ECHANGE'])
