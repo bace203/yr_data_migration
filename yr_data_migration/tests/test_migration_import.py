@@ -652,6 +652,27 @@ class TestMigrationImport(TransactionCase):
         self.assertEqual(blanc.yr_status, 'Actif')
         self.assertFalse(Template.search([('default_code', '=', 'SAGE101')]).active)
 
+    def test_old_xls_file(self):
+        try:
+            import xlwt
+        except ImportError:
+            self.skipTest('xlwt missing')
+        book = xlwt.Workbook()
+        sheet = book.add_sheet('Sheet1')
+        header = ['Article', 'Catégori', 'Désignation    ', 'Code à barre', 'Etat', 'Marque ', 'Marque', 'Ligne']
+        for c, value in enumerate(header):
+            sheet.write(0, c, value)
+        for c, value in enumerate(['XLS100', 'CDISC', 'ARTICLE XLS', '5600001', 1, 'M1', 'YVES ROCHER', 'L1']):
+            sheet.write(1, c, value)
+        out = io.BytesIO()
+        book.save(out)
+        wizard = self.env['yr.migration.import'].create({'file': base64.b64encode(out.getvalue()),
+                                                         'filename': 'Liste des article Sage x3.xls'})
+        self.assertEqual(wizard.file_type, 'article_sage')
+        wizard.action_import()
+        self.assertEqual(self.env['product.template'].search([('default_code', '=', 'XLS100')]).yr_brand,
+                         'YVES ROCHER')
+
     def test_coupons_skipped_and_motifs(self):
         day = datetime.combine(date.today() - timedelta(days=2), datetime.min.time())
         rows = [DETAIL_HEADER,

@@ -283,6 +283,45 @@ def is_coupon(item):
                 or norm(item.get('name')).startswith('bondachat'))
 
 
+def is_xls(content):
+    return content[:4] == b'\xd0\xcf\x11\xe0'
+
+
+def _xlrd():
+    try:
+        import xlrd
+    except ImportError:
+        raise UserError(_('Fichier Excel ancien (.xls) : enregistrez-le en .xlsx (Fichier › Enregistrer sous) '
+                          'puis réimportez-le.'))
+    return xlrd
+
+
+def xls_sheet_names(content):
+    return _xlrd().open_workbook(file_contents=content, on_demand=True).sheet_names()
+
+
+def xls_rows(content, sheet=None):
+    """Rows of an old Excel file (.xls): dates become datetimes, whole numbers integers."""
+    xlrd = _xlrd()
+    book = xlrd.open_workbook(file_contents=content, on_demand=True)
+    worksheet = book.sheet_by_name(sheet) if sheet else book.sheet_by_index(0)
+    for r in range(worksheet.nrows):
+        row = []
+        for cell in worksheet.row(r):
+            value = cell.value
+            if cell.ctype == xlrd.XL_CELL_DATE:
+                try:
+                    value = xlrd.xldate.xldate_as_datetime(value, book.datemode)
+                except Exception:  # noqa: BLE001
+                    value = None
+            elif cell.ctype in (xlrd.XL_CELL_EMPTY, xlrd.XL_CELL_BLANK):
+                value = None
+            elif cell.ctype == xlrd.XL_CELL_NUMBER and float(value).is_integer():
+                value = int(value)
+            row.append(value)
+        yield row
+
+
 def phone(value):
     digits = re.sub(r'\D', '', text(value))
     return digits or ''
@@ -404,7 +443,11 @@ class YrMigrationImport(models.TransientModel):
         """Header (normalised, or as is with raw=True) + data rows, empty rows skipped."""
         content = self._content()
         name = (self.filename or '').lower()
-        if name.endswith(('.xlsx', '.xlsm')) or content[:2] == b'PK':
+        if is_xls(content):                       # old Excel file (.xls)
+            sheet = self.env.context.get('yr_sheet')
+            rows = xls_rows(content, sheet)
+            total = 0
+        elif name.endswith(('.xlsx', '.xlsm')) or content[:2] == b'PK':
             import openpyxl
             workbook = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
             sheet = self.env.context.get('yr_sheet')
@@ -440,6 +483,8 @@ class YrMigrationImport(models.TransientModel):
     def _sheet_names(self):
         """Sheets of an Excel workbook (empty for a CSV file)."""
         content = self._content()
+        if is_xls(content):
+            return xls_sheet_names(content)
         if not ((self.filename or '').lower().endswith(('.xlsx', '.xlsm')) or content[:2] == b'PK'):
             return []
         import openpyxl
@@ -940,7 +985,9 @@ class YrMigrationImport(models.TransientModel):
         codes = self.env['yr.client.code'].sudo()._codes_for({i['card'] for i in items})
         Partner = self.env['res.partner'].sudo()
         to_create, created_cards = [], set()
-        for item in items:
+        for position, item in enumerate(items, start=1):
+            if position % 200 == 0:           # also when the customers already exist (updates, skipped)
+                self._progress(position, len(items), _('Enregistrement des clients'))
             card = item['card']
             vals = self._customer_vals(item, kind, stores, stats)
             code = client_code(item.get('fm_id')) or codes.get(card)
@@ -995,6 +1042,7 @@ class YrMigrationImport(models.TransientModel):
         if to_create:
             self._create_customers(Partner, to_create, stats, errors)
         cards = list({i['card'] for i in items})
+        self._progress(len(items), len(items), _('Rattachement des ventes et calcul des statuts clients'), force=True)
         self.env['yr.client.code'].sudo()._link_partners(cards)
         partner_ids = {partner.id for partner in self._existing_customers(cards).values()}
         partner_ids |= self.env['yr.legacy.purchase']._link_partners(cards)
