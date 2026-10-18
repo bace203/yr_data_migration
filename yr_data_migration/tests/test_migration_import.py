@@ -652,6 +652,46 @@ class TestMigrationImport(TransactionCase):
         self.assertEqual(blanc.yr_status, 'Actif')
         self.assertFalse(Template.search([('default_code', '=', 'SAGE101')]).active)
 
+    def test_customers_without_card_are_imported_with_their_code(self):
+        header = ['Client', 'Nom', 'Prenom', 'CarteFidelite', 'JourNaissance', 'MoisNaissance', 'AnneeNaissance',
+                  'PubParEMail']
+        rows = [header,
+                [88001, 'PREMIER', 'CARTE', 9951001, 0, 0, 0, 1],
+                [88002, 'DEUXIEME', 'MEME CARTE', 9951001, 0, 0, 0, 1],
+                [88003, 'SANS', 'CARTE', None, 29, 2, 1995, 0],
+                [None, 'SANS', 'CODE', None, 0, 0, 0, 0]]
+        wizard = self._import(rows)
+        self.assertEqual(wizard.file_type, 'client_detail')
+        Partner = self.env['res.partner'].with_context(active_test=False)
+        first = Partner.search([('yr_client_code', '=', 'Y88001')])
+        second = Partner.search([('yr_client_code', '=', 'Y88002')])
+        third = Partner.search([('yr_client_code', '=', 'Y88003')])
+        self.assertEqual(first.customer_code, '9951001')
+        self.assertFalse(second.customer_code)                          # the shared card stays on the first
+        self.assertIn('9951001', second.comment or '')
+        self.assertFalse(third.customer_code)                           # no card number is invented
+        self.assertEqual((third.birth_day, third.birth_month, third.birth_year), ('29', '2', False))
+        self.assertFalse(Partner.search([('name', 'ilike', 'SANS CODE')]))   # nothing to recognise it by
+        self.assertIn('importés sans n° de carte', wizard.result)
+        self.assertIn('Cartes partagées', wizard.result)
+        # the sales detail finds each customer by its client code, even when the card is shared
+        day = datetime.combine(date.today() - timedelta(days=4), datetime.min.time())
+        line_a = self._detail(6199001, day, 'RIM', 'VEND', 9951001, 'ZC1', 3660009570001, 'CRAYON', 1, 20, 0, 20)
+        line_a[5] = 88002                                                   # client code of the second customer
+        line_b = self._detail(6199002, day, 'RIM', 'VEND', None, 'ZC2', 3660009570002, 'CREME', 1, 18, 0, 18)
+        line_b[5] = 88003                                                   # no card at all
+        self._import([DETAIL_HEADER, line_a, line_b])
+        Line = self.env['yr.legacy.sale.line']
+        self.assertEqual(Line.search([('ticket', '=', '6199001')]).partner_id, second)
+        self.assertEqual(Line.search([('ticket', '=', '6199002')]).partner_id, third)
+        # re-import: nobody duplicated
+        self._import(rows)
+        self.assertEqual(Partner.search_count([('yr_client_code', 'in', ['Y88001', 'Y88002', 'Y88003'])]), 3)
+        # the option off: the old behaviour (customers without a card are left out)
+        off = self._import([header, [88009, 'AUTRE', 'SANS CARTE', None, 0, 0, 0, 0]], import_no_card=False)
+        self.assertFalse(Partner.search([('yr_client_code', '=', 'Y88009')]))
+        self.assertIn('non importés) : <b>1</b>', off.result)
+
     def test_old_xls_file(self):
         try:
             import xlwt

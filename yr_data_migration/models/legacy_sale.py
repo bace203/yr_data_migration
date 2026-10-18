@@ -104,6 +104,30 @@ class YrLegacySaleLine(models.Model):
         self.invalidate_model(['motif_id'])
         self.env['pos.order.line'].invalidate_model(['crm_motif_id', 'crm_motif_ids'])
 
+    def _link_partners_by_code(self, codes):
+        """Lines whose fastmag client code (Y…) is the code of an imported customer: linked to it (also the POS orders
+        already made). The code tells apart two customers who share a card."""
+        codes = list(codes or [])
+        if not codes:
+            return
+        self.flush_model()
+        self.env['res.partner'].flush_model(['yr_client_code'])
+        self.env.cr.execute(SQL("""
+            UPDATE yr_legacy_sale_line l SET partner_id = p.id
+              FROM res_partner p
+             WHERE p.yr_client_code = l.legacy_client_id AND l.legacy_client_id = ANY(%s)
+               AND l.partner_id IS DISTINCT FROM p.id
+        """, codes))
+        self.invalidate_model(['partner_id'])
+        self.env['pos.order'].flush_model(['partner_id'])
+        self.env.cr.execute(SQL("""
+            UPDATE pos_order o SET partner_id = l.partner_id
+              FROM yr_legacy_sale_line l
+             WHERE l.pos_order_id = o.id AND l.legacy_client_id = ANY(%s) AND l.partner_id IS NOT NULL
+               AND o.partner_id IS DISTINCT FROM l.partner_id
+        """, codes))
+        self.env['pos.order'].invalidate_model(['partner_id'])
+
     def _link_partners(self, cards=None):
         self.flush_model()
         self.env['res.partner'].flush_model(['customer_code', 'yr_legacy_code'])

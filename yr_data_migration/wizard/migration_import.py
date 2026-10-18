@@ -338,6 +338,11 @@ class YrMigrationImport(models.TransientModel):
                                  readonly=False, help='Reconnu automatiquement d\'après les en-têtes.')
     # articles
     create_categories = fields.Boolean('Créer les catégories PdV manquantes (axe › sous-axe)', default=True)
+    import_no_card = fields.Boolean(
+        'Importer aussi les clients sans n° de carte', default=True,
+        help='Un client sans vrai numéro de carte (vide, 0, 000000…) est importé avec son code client (Y…) : ses ventes '
+             'du détail commercial lui sont rattachées par ce code. Il n\'a pas de numéro de carte fidélité. Une carte '
+             'partagée par plusieurs clients reste sur la première fiche : les autres sont importés sans carte.')
     deduce_motif = fields.Boolean(
         'Déduire le motif des lignes remisées', default=True,
         help='L\'historique ne dit pas comment une promotion a été faite. Une ligne remisée (au moins 1 %) sans motif '
@@ -660,6 +665,8 @@ class YrMigrationImport(models.TransientModel):
             'coupons': _('Lignes de coupon / bon d\'achat (non importées)'),
             'coupon_articles': _('Articles « bon d\'achat » (non importés)'),
             'no_card': _('Clients sans vrai n° de carte fidélité (non importés)'),
+            'imported_no_card': _('Clients importés sans n° de carte (rattachés à leurs ventes par le code client)'),
+            'shared_cards': _('Cartes partagées : clients importés sans carte (la carte reste sur la première fiche)'),
             'codes': _('Codes clients fastmag'), 'codes_no_card': _('Codes sans vraie carte (ventes anonymes)'),
             'codes_linked': _('Codes rattachés à un client'),
             'relinked': _('Lignes de ventes déjà importées rattachées à leur client'),
@@ -891,6 +898,11 @@ class YrMigrationImport(models.TransientModel):
             birthday = parse_birthday('%02d/%02d/%04d' % (day, month, year)) if day and month else None
         if birthday:
             day, month, year = birthday
+            if year:
+                try:
+                    date(year, month, day)
+                except ValueError:                # 29/02 of a year that was not a leap year: the year is dropped
+                    year = None
             vals.update(birth_day=str(day), birth_month=str(month), birth_year=str(year) if year else False)
         amount = number(item.get('amount'))
         if amount:
@@ -973,34 +985,42 @@ class YrMigrationImport(models.TransientModel):
         items = []
         for item in self._records(kind):
             card = card_number(item.get('card'))
+            code = client_code(item.get('fm_id'))
             if not card and norm(item.get('card')) == 'numcliente':
                 continue                        # the sample's description row (« numCliente », « nom »…)
-            if not card:
-                # no real loyalty card (empty, 0, 000000…): not a customer of the loyalty programme
+            name = ' '.join(filter(None, [text(item.get('lastname')), text(item.get('firstname'))]))
+            if not card and not (self.import_no_card and code):
+                # no real card and nothing else to recognise the customer by
                 stats['no_card'] += 1
-                name = ' '.join(filter(None, [text(item.get('lastname')), text(item.get('firstname'))]))
                 self._note(item['_line'], text(item.get('card')), _('Non importé'),
-                           _('pas de numéro de carte fidélité (%s)', name or _('sans nom')))
+                           _('pas de numéro de carte fidélité ni de code client (%s)', name or _('sans nom')))
                 continue
             item['card'] = card
+            item['code'] = code
             items.append(item)
         stats['rows'] = len(items) + stats['no_card']
         stores = self._stores()
-        existing = self._existing_customers(list({i['card'] for i in items}))
-        codes = self.env['yr.client.code'].sudo()._codes_for({i['card'] for i in items})
-        Partner = self.env['res.partner'].sudo()
-        to_create, created_cards = [], set()
+        cards_in_file = list({i['card'] for i in items if i['card']})
+        existing = self._existing_customers(cards_in_file)
+        codes = self.env['yr.client.code'].sudo()._codes_for(set(cards_in_file))
+        by_code = self._customers_by_code([i['code'] for i in items if i['code']])
+        Partner = self.env['res.partner'].sudo().with_context(crm_keep_without_card=True)
+        to_create, created_cards, created_codes = [], set(), set()
         for position, item in enumerate(items, start=1):
             if position % 200 == 0:           # also when the customers already exist (updates, skipped)
                 self._progress(position, len(items), _('Enregistrement des clients'))
             card = item['card']
             vals = self._customer_vals(item, kind, stores, stats)
-            code = client_code(item.get('fm_id')) or codes.get(card)
+            code = item['code'] or codes.get(card)
             if code:
                 vals['yr_client_code'] = code
             if not vals.get('birth_day'):
                 vals.pop('birth_year', None)
-            partner = existing.get(card)
+            # the customer already known: by its card, else by its fastmag client code
+            partner = existing.get(card) if card else None
+            if not partner and code:
+                partner = by_code.get(code)
+            label = card or code
             if partner:
                 if not self.update_existing:
                     stats['skipped'] += 1
@@ -1015,7 +1035,7 @@ class YrMigrationImport(models.TransientModel):
                     update['birth_year'] = vals['birth_year']
                 if 'birth_day' in update and 'birth_month' not in update:
                     update.pop('birth_day')
-                if not partner.yr_legacy_code:
+                if card and not partner.yr_legacy_code and existing.get(card) == partner:
                     update['yr_legacy_code'] = card
                 if not partner.active:
                     update['active'] = True             # archived by « Supprimer les clients »: back
@@ -1025,19 +1045,31 @@ class YrMigrationImport(models.TransientModel):
                             partner.sudo().write(update)
                         stats['updated'] += 1
                     except Exception as error:  # noqa: BLE001 - reported per line
-                        errors.append((item['_line'], card, str(error)))
+                        errors.append((item['_line'], label, str(error)))
                 else:
                     stats['skipped'] += 1
                 continue
-            if card in created_cards:
-                errors.append((item['_line'], card, _('numéro de carte en double dans le fichier : ligne ignorée')))
+            if code and code in created_codes:
+                errors.append((item['_line'], label, _('code client en double dans le fichier : ligne ignorée')))
                 continue
-            vals.update({
-                'name': vals.get('name') or _('Client %s', card), 'customer_code': card, 'barcode': card,
-                'yr_legacy_code': card, 'crm_is_customer': True, 'customer_rank': 1,
-            })
+            vals.update({'name': vals.get('name') or _('Client %s', label), 'crm_is_customer': True, 'customer_rank': 1})
+            if card and card not in created_cards:
+                vals.update(customer_code=card, barcode=card, yr_legacy_code=card)
+                created_cards.add(card)
+            elif card:
+                # the card is already on another customer of the file: this one is imported without a card number
+                if not code:
+                    errors.append((item['_line'], label, _('carte déjà utilisée et pas de code client : ligne ignorée')))
+                    continue
+                stats['shared_cards'] += 1
+                vals['comment'] = _('Carte %s partagée avec un autre client (gardée sur la première fiche).', card)
+                self._note(item['_line'], card, _('Importé sans carte'),
+                           _('carte partagée avec un autre client : importé sans n° de carte (%s)', code))
+            else:
+                stats['imported_no_card'] += 1
+            if code:
+                created_codes.add(code)
             to_create.append((item['_line'], vals))
-            created_cards.add(card)
             if len(to_create) >= BATCH:
                 self._create_customers(Partner, to_create, stats, errors)
                 to_create = []
@@ -1046,13 +1078,25 @@ class YrMigrationImport(models.TransientModel):
                                _('Enregistrement des clients'))
         if to_create:
             self._create_customers(Partner, to_create, stats, errors)
-        cards = list({i['card'] for i in items})
+        cards = list({i['card'] for i in items if i['card']})
+        codes_in_file = list({i['code'] for i in items if i['code']})
         self._progress(len(items), len(items), _('Rattachement des ventes et calcul des statuts clients'), force=True)
         self.env['yr.client.code'].sudo()._link_partners(cards)
         partner_ids = {partner.id for partner in self._existing_customers(cards).values()}
+        partner_ids |= {partner.id for partner in self._customers_by_code(codes_in_file).values()}
         partner_ids |= self.env['yr.legacy.purchase']._link_partners(cards)
-        self.env['yr.legacy.sale.line'].sudo()._link_partners(cards)
+        SaleLine = self.env['yr.legacy.sale.line'].sudo()
+        SaleLine._link_partners(cards)
+        SaleLine._link_partners_by_code(codes_in_file)          # the client code is the finer link (shared cards)
         self._refresh_crm(partner_ids)
+
+    def _customers_by_code(self, codes):
+        found = {}
+        Partner = self.env['res.partner'].with_context(active_test=False)
+        for start in range(0, len(codes), 5000):
+            for partner in Partner.search([('yr_client_code', 'in', codes[start:start + 5000])]):
+                found.setdefault(partner.yr_client_code, partner)
+        return found
 
     def _create_customers(self, Partner, batch, stats, errors):
         try:
@@ -1532,6 +1576,7 @@ class YrMigrationImport(models.TransientModel):
             {client_code(i.get('fm_id')) for i in items if not card_number(i.get('card'))} - {''})
         unmapped, sellers_seen, cashiers_seen, unknown_refs = defaultdict(int), set(), set(), defaultdict(int)
         visits, to_create, cards, changed_tickets = {}, [], set(), set()
+        codes_seen = set()
         done = 0
         for item in items:
             store = stores.get(item['shop'])
@@ -1541,6 +1586,8 @@ class YrMigrationImport(models.TransientModel):
             # the card of the file, else the card of the fastmag customer code (Y88074 / 88074)
             code = client_code(item.get('fm_id'))
             card = card_number(item.get('card'))
+            if code:
+                codes_seen.add(code)
             if not card and code:
                 card = mapped.get(code, '')
                 if card:
@@ -1616,6 +1663,7 @@ class YrMigrationImport(models.TransientModel):
             for start in range(0, len(ticket_list), 20000):
                 SaleLine._yr_delete_pos_orders(ticket_list[start:start + 20000])
         SaleLine._link_partners(list(cards))
+        SaleLine._link_partners_by_code(codes_seen)             # customers without a card, or sharing one
         SaleLine.flush_model()
         SaleLine._link_motifs()
         if self.create_pos_orders:
