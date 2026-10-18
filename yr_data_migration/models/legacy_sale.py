@@ -55,7 +55,8 @@ class YrLegacySaleLine(models.Model):
     price_unit = fields.Float('Prix', digits='Product Price')
     discount = fields.Float('Remise (%)')
     amount = fields.Float('Total TTC', digits='Product Price')
-    reason = fields.Char('Motif')
+    reason = fields.Char('Motif (texte du fichier)')
+    motif_id = fields.Many2one('loyalty.motif', 'Motif', index='btree_not_null', ondelete='set null')
     comment = fields.Char('Commentaire')
     pos_order_id = fields.Many2one('pos.order', 'Commande PdV', index='btree_not_null', ondelete='set null',
                                    copy=False, help='Commande du point de vente créée pour ce ticket.')
@@ -64,6 +65,25 @@ class YrLegacySaleLine(models.Model):
                          'Une seule ligne par magasin, ticket et n° de ligne.')]
 
     @api.model
+    @api.model
+    def _link_motifs(self):
+        """Lines with a reason in the file but no motif yet: the motif of that name is created (generic) and linked,
+        also on the POS order lines already created."""
+        cr = self.env.cr
+        cr.execute("SELECT DISTINCT reason FROM yr_legacy_sale_line WHERE motif_id IS NULL AND reason IS NOT NULL")
+        for (reason,) in cr.fetchall():
+            motif = self.env['loyalty.motif'].sudo()._for_name(reason)
+            if motif:
+                cr.execute("UPDATE yr_legacy_sale_line SET motif_id = %s WHERE motif_id IS NULL AND reason = %s",
+                           [motif.id, reason])
+        cr.execute("""
+            UPDATE pos_order_line pl SET crm_motif_id = l.motif_id
+              FROM yr_legacy_sale_line l
+             WHERE pl.yr_fastmag_line_id = l.id AND l.motif_id IS NOT NULL AND pl.crm_motif_id IS NULL
+        """)
+        self.invalidate_model(['motif_id'])
+        self.env['pos.order.line'].invalidate_model(['crm_motif_id'])
+
     def _link_partners(self, cards=None):
         self.flush_model()
         self.env['res.partner'].flush_model(['customer_code', 'yr_legacy_code'])
@@ -289,7 +309,7 @@ class YrLegacySaleLine(models.Model):
         cr.execute(SQL("""
             SELECT id, shop_code, ticket, sequence, date, store_id, partner_id, card, seller_id, seller_name,
                    cashier_id, cashier_name, product_id, is_stamp, name, product_ref, qty, price_unit, discount,
-                   amount
+                   amount, motif_id
               FROM yr_legacy_sale_line
              WHERE pos_order_id IS NULL AND store_id IS NOT NULL AND ticket = ANY(%s) AND shop_code = ANY(%s)
              ORDER BY shop_code, ticket, sequence, id
@@ -327,6 +347,7 @@ class YrLegacySaleLine(models.Model):
                     'qty': r['qty'] or 0.0, 'price_unit': r['price_unit'] or 0.0, 'discount': r['discount'] or 0.0,
                     'price_subtotal': r['amount'] or 0.0, 'price_subtotal_incl': r['amount'] or 0.0,
                     'tax_ids': [(6, 0, [])], 'yr_fastmag_line_id': r['id'],
+                    'crm_motif_id': r['motif_id'] or False,
                 }) for r in rows],
             }
             if has_employee:

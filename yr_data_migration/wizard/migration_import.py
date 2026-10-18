@@ -22,7 +22,9 @@ from odoo.tools import SQL, html_escape
 
 BATCH = 500
 FILE_TYPES = [
-    ('article', 'Articles (fiche article fastmag)'),
+    ('article_sage', 'Articles Sage X3 (Article, Catégori, Code à barre…)'),
+    ('client_detail', 'Clients détail (Client, CarteFidelite, Civilite…)'),
+    ('article', 'Articles (fiche article fastmag, ancien format)'),
     ('client_new', 'Clients 2017-2026 (CardNumbre…)'),
     ('client_old', 'Clients ancien système (numCliente…)'),
     ('client_codes', 'Codes clients fastmag (CodeClient Y…, carte fidélité)'),
@@ -33,7 +35,7 @@ FILE_TYPES = [
     ('workbook', 'Classeur à plusieurs feuilles (magasins, vendeurs…)'),
 ]
 # a workbook: its sheets are imported in this order (stores first: the other files refer to them)
-SHEET_ORDER = ['stores', 'sellers', 'article', 'client_new', 'client_old', 'client_codes', 'client_ca',
+SHEET_ORDER = ['stores', 'sellers', 'article_sage', 'article', 'client_detail', 'client_new', 'client_old', 'client_codes', 'client_ca',
                'sales_detail']
 # columns of each file (normalised header → key); the first ones identify the file
 COLUMNS = {
@@ -43,6 +45,20 @@ COLUMNS = {
         'nature': 'nature', 'cont': 'packaging', 'genre': 'gender', 'statut': 'status', 'prix': 'price',
         'un': 'uom', 'datecreati': 'create_date', 'datecreation': 'create_date', 'fourncode': 'supplier_code',
         'fourndes': 'supplier_name',
+    },
+    'article_sage': {
+        'article': 'code', 'categori': 'category', 'designation': 'name', 'codeabarre': 'barcode', 'etat': 'status',
+        'marque': 'brand', 'ligne': 'line', 'axe': 'axe', 'sousaxe': 'sub_axe', 'nature': 'nature',
+        'credat0': 'create_date',
+    },
+    'client_detail': {
+        'client': 'fm_id', 'nom': 'lastname', 'prenom': 'firstname', 'civilite': 'title', 'adresse1': 'street',
+        'adresse2': 'street2', 'adresse3': 'street3', 'codepostal': 'zip', 'ville': 'city', 'pays': 'country',
+        'telephone': 'phone', 'portable': 'mobile', 'email': 'email', 'journaissance': 'birth_d',
+        'moisnaissance': 'birth_m', 'anneenaissance': 'birth_y', 'sexe': 'gender', 'cartefidelite': 'card',
+        'magasincreation': 'shop', 'datecreation': 'entry_date', 'totalca': 'amount',
+        'pubparemail': 'optin_email', 'pubparsms': 'optin_sms', 'utilisateurcreation': 'seller',
+        'datedernierachat': 'last_purchase',
     },
     'client_new': {
         'cardnumbre': 'card', 'cardnumber': 'card', 'surname': 'lastname', 'firstname': 'firstname', 'id': 'fm_id',
@@ -83,6 +99,8 @@ COLUMNS = {
                 'vendeur': 'seller', 'codelogistique': 'logistic_code'},
 }
 SIGNATURE = {
+    'article_sage': {'article', 'categori', 'codeabarre'},
+    'client_detail': {'client', 'cartefidelite', 'pubparemail'},
     'article': {'refarticle', 'eanbar'},
     'client_new': {'cardnumbre'},
     'client_old': {'numcliente'},
@@ -94,12 +112,15 @@ SIGNATURE = {
 }
 # civilities written in many ways in the files → the standard list (gender deduced when the file has none)
 TITLE_ALIASES = [
-    ('base.res_partner_title_madam', ('madame', 'mme', 'mrs', 'madam', 'mde'), 'f'),
+    ('base.res_partner_title_madam', ('madame', 'mme', 'mrs', 'madam', 'mde', 'femme'), 'f'),
     ('base.res_partner_title_miss', ('mademoiselle', 'mlle', 'melle', 'mle', 'miss'), 'f'),
-    ('base.res_partner_title_mister', ('monsieur', 'm', 'mr', 'mister', 'mons'), 'h'),
+    ('base.res_partner_title_mister', ('monsieur', 'm', 'mr', 'mister', 'mons', 'homme'), 'h'),
     ('base.res_partner_title_doctor', ('docteur', 'dr', 'doctor'), False),
     ('base.res_partner_title_prof', ('professeur', 'pr', 'prof', 'professor'), False),
 ]
+LAST_WINS = {'article_sage': {'brand'}}    # two columns with the same header: the last one holds the name
+COUPON_CATEGORIES = {'CAFV'}                  # « BON D'ACHAT »: a coupon is not a product
+COUPON_REF = re.compile(r'^Y\d{5,}$')          # coupon code typed / scanned instead of an article barcode
 STAMP_REFS = {'DTT', 'TIMBRE'}      # « droit de timbre sur ticket »: not an article
 MAX_NOTES = 100000                   # lines of the detailed report (Excel)
 
@@ -250,6 +271,12 @@ def client_code(value):
     if value.isdigit():
         return 'Y%s' % value if value.strip('0') else ''
     return value if re.match(r'^Y\d+$', value) else ''
+
+
+def is_coupon(item):
+    """A sales line that is a coupon (code Y13051967 in the barcode column) or a « BON D'ACHAT » article."""
+    return bool(COUPON_REF.match(text(item.get('ref')).upper()) or COUPON_REF.match(text(item.get('ean')).upper())
+                or norm(item.get('name')).startswith('bondachat'))
 
 
 def phone(value):
@@ -465,7 +492,7 @@ class YrMigrationImport(models.TransientModel):
         mapping = {}
         for idx, col in enumerate(header):
             key = COLUMNS[kind].get(col)
-            if key and key not in mapping:
+            if key and (key not in mapping or key in LAST_WINS.get(kind, ())):
                 mapping[key] = idx
         missing = [col for col in SIGNATURE[kind] if col not in header]
         if missing:
@@ -576,6 +603,8 @@ class YrMigrationImport(models.TransientModel):
             'sellers_updated': _('Vendeurs mis à jour'), 'closed': _('Magasins fermés (archivés)'),
             'companies': _('Sociétés (filiales) créées'), 'pos': _('Points de vente (caisses) créés'),
             'already': _('Lignes déjà importées (reprise : non refaites)'),
+            'coupons': _('Lignes de coupon / bon d\'achat (non importées)'),
+            'coupon_articles': _('Articles « bon d\'achat » (non importés)'),
             'no_card': _('Clients sans vrai n° de carte fidélité (non importés)'),
             'codes': _('Codes clients fastmag'), 'codes_no_card': _('Codes sans vraie carte (ventes anonymes)'),
             'codes_linked': _('Codes rattachés à un client'),
@@ -645,8 +674,25 @@ class YrMigrationImport(models.TransientModel):
             cache[key] = supplier
         return cache[key]
 
-    def _import_article(self, stats, errors):
-        items = [i for i in self._records('article') if text(i.get('code')) or text(i.get('barcode'))]
+    def _import_article_sage(self, stats, errors):
+        self._import_article(stats, errors, 'article_sage')
+
+    def _import_article(self, stats, errors, kind='article'):
+        items = []
+        for item in self._records(kind):
+            if not (text(item.get('code')) or text(item.get('barcode'))):
+                continue
+            if kind == 'article_sage':
+                if text(item.get('category')).upper() in COUPON_CATEGORIES:
+                    stats['coupon_articles'] += 1
+                    self._note(item['_line'], text(item.get('code')), _('Non importé'),
+                               _('bon d\'achat (%s) : un coupon n\'est pas un article', text(item.get('name'))))
+                    continue
+                # Etat 1 = actif; Nature « 0 » = empty
+                item['status'] = 'Actif' if text(item.get('status')) in ('1', '') else 'Inactif'
+                if text(item.get('nature')) == '0':
+                    item['nature'] = ''
+            items.append(item)
         stats['rows'] = len(items)
         Template = self.env['product.template'].with_context(active_test=False)
         codes = [text(i.get('code')) for i in items if text(i.get('code'))]
@@ -776,12 +822,19 @@ class YrMigrationImport(models.TransientModel):
         # civilité / ancienne civilité: from the list (Madame, Mlle, M.…), a new value is added to the list
         title = self._title_id(item.get('title'))
         vals['title'] = title
+        if kind == 'client_detail':
+            vals['country_id'] = self._country_id(item.get('country'))
+            for key in ('optin_email', 'optin_sms'):
+                vals[key] = bool(number(item.get(key)))
         vals['crm_old_title_id'] = self._title_id(item.get('old_title'))
         if title and not vals['crm_gender']:
             vals['crm_gender'] = self._cache().get('title_gender', {}).get(title, False)
         if kind == 'client_old' and item.get('npai') not in (None, ''):
             vals['yr_npai'] = bool(number(item.get('npai')))
         birthday = parse_birthday(item.get('birthday'), unknown_years)
+        if kind == 'client_detail':             # day, month and year in three columns (0 = unknown)
+            day, month, year = (int(number(item.get(k)) or 0) for k in ('birth_d', 'birth_m', 'birth_y'))
+            birthday = parse_birthday('%02d/%02d/%04d' % (day, month, year)) if day and month else None
         if birthday:
             day, month, year = birthday
             vals.update(birth_day=str(day), birth_month=str(month), birth_year=str(year) if year else False)
@@ -789,7 +842,7 @@ class YrMigrationImport(models.TransientModel):
         if amount:
             vals.update(yr_legacy_amount=amount, yr_migration_date=fields.Date.context_today(self))
         shop = text(item.get('shop')).upper()
-        if shop:
+        if shop and shop != 'CENTRAL':          # CENTRAL = the head office, not a store
             if shop in stores:
                 vals['crm_store_id'] = stores[shop].id
             else:
@@ -801,8 +854,8 @@ class YrMigrationImport(models.TransientModel):
     def _title_id(self, value):
         """Civility of the file (Madame, MME, Mlle, M., Monsieur, Dr…) → res.partner.title, created if new."""
         key = norm(value)
-        if not key:
-            return False
+        if not key or re.search(r'\d', text(value)) or len(key) > 15:
+            return False                        # empty, or an address typed in the civility column
         cache = self._cache()
         if 'titles' not in cache:
             Title = self.env['res.partner.title'].sudo()
@@ -835,6 +888,18 @@ class YrMigrationImport(models.TransientModel):
             cache['tunisia'] = tunisia.id if tunisia else False
         return cache['tunisia']
 
+    def _country_id(self, value):
+        """Country of the file (empty / Tunisie → Tunisia; another known country name is kept)."""
+        name = text(value)
+        if norm(name) in ('', 'tunisie', 'tunisia', 'tn', 'tun'):
+            return self._tunisia_id()
+        cache = self._cache()
+        if name.lower() not in cache.setdefault('countries', {}):
+            country = self.env['res.country'].search(['|', ('name', '=ilike', name), ('code', '=ilike', name)],
+                                                     limit=1)
+            cache['countries'][name.lower()] = country.id or self._tunisia_id()
+        return cache['countries'][name.lower()]
+
     def _seller_id(self, code):
         """Seller of the file (code logistique 703, or fastmag name) → employee."""
         if not code:
@@ -854,6 +919,8 @@ class YrMigrationImport(models.TransientModel):
         items = []
         for item in self._records(kind):
             card = card_number(item.get('card'))
+            if not card and norm(item.get('card')) == 'numcliente':
+                continue                        # the sample's description row (« numCliente », « nom »…)
             if not card:
                 # no real loyalty card (empty, 0, 000000…): not a customer of the loyalty programme
                 stats['no_card'] += 1
@@ -946,6 +1013,9 @@ class YrMigrationImport(models.TransientModel):
 
     def _import_client_new(self, stats, errors):
         self._import_customers('client_new', stats, errors)
+
+    def _import_client_detail(self, stats, errors):
+        self._import_customers('client_detail', stats, errors)
 
     def _import_client_old(self, stats, errors):
         self._import_customers('client_old', stats, errors)
@@ -1350,6 +1420,11 @@ class YrMigrationImport(models.TransientModel):
                 errors.append((item['_line'], ticket, _('magasin, n° de vente ou date manquant')))
                 continue
             stats['rows'] += 1
+            if is_coupon(item):
+                stats['coupons'] += 1
+                self._note(item['_line'], ticket, _('Non importé'), _(
+                    'ligne de coupon / bon d\'achat (%s) : les coupons ne sont pas repris', text(item.get('ref'))))
+                continue
             rank[(shop, ticket)] += 1
             item.update(shop=shop, ticket=ticket, day=day, sequence=rank[(shop, ticket)])
             ref = text(item.get('ref'))
@@ -1478,6 +1553,8 @@ class YrMigrationImport(models.TransientModel):
             for start in range(0, len(ticket_list), 20000):
                 SaleLine._yr_delete_pos_orders(ticket_list[start:start + 20000])
         SaleLine._link_partners(list(cards))
+        SaleLine.flush_model()
+        SaleLine._link_motifs()
         if self.create_pos_orders:
             stats['pos_pending'] = len(tickets)
             SaleLine.flush_model()

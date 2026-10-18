@@ -148,7 +148,7 @@ class TestMigrationImport(TransactionCase):
         crm.action_import()
         tmpl = self.env['product.template'].search([('default_code', '=', 'T100102999')])
         self.assertEqual((tmpl.yr_line, tmpl.yr_sub_axe_id.name, tmpl.yr_brand), ('CN3', 'TEINT TEST', 'YVES ROCHER'))
-        self.assertIn('Articles (fiche article fastmag)', crm.result)
+        self.assertIn('Articles (fiche article fastmag', crm.result)
         # an ordinary article file keeps the CRM import
         other = self.env['loyalty.product.import'].create({
             'file': base64.b64encode('Code article;Désignation;Prix\nTX1;Autre;3\n'.encode()), 'filename': 'a.csv'})
@@ -607,6 +607,73 @@ class TestMigrationImport(TransactionCase):
         Line._link_employees()
         self.assertEqual(slimeni.seller_id, employee)
         self.assertEqual(slimeni.pos_order_id.yr_seller_id, employee)   # the POS order follows
+
+    # ── new files: client detail, Sage X3 articles, coupons, motifs ──────
+    def test_client_detail_and_sage_articles(self):
+        header = ['Client', 'Nom', 'Prenom', 'Civilite', 'Adresse1', 'codepostal', 'Ville', 'Pays', 'Telephone',
+                  'Portable', 'Email', 'JourNaissance', 'MoisNaissance', 'Sexe', 'CarteFidelite', 'MagasinCreation',
+                  'DateCreation', 'totalca', 'PubParEMail', 'PubParSMS', 'AnneeNaissance']
+        rows = [header,
+                [1, 'nom', 'prenom', None, 'adresse', 'code postal', 'ville', None, 'telephone', 'gsm', 'e-mail', 0, 0,
+                 'F', 'numCliente', 'CENTRAL', datetime(2017, 1, 1), 0, 1, 1, 0],
+                [77001, 'DETAIL', 'NADIA', ' MME', '7 RUE TEST', 1000, 'TUNIS', None, None, 99230596, 'N@T.TN', 14, 3,
+                 'F', 9940111111, 'CENTRAL', datetime(2012, 8, 22), 0, 1, 0, 1985],
+                [77002, 'DETAIL', 'SAMIA', ' 7 RUE MOHAM', '8 RUE TEST', 1000, 'TUNIS', 'France', None, 96406255, None,
+                 0, 0, 'F', 9940222222, 'CENTRAL', datetime(2017, 7, 19), 0, 0, 0, 0]]
+        wizard = self._import(rows)
+        self.assertEqual(wizard.file_type, 'client_detail')
+        Partner = self.env['res.partner']
+        nadia = Partner.search([('customer_code', '=', '9940111111')])
+        self.assertEqual((nadia.yr_client_code, nadia.title.shortcut, nadia.crm_gender), ('Y77001', 'Mrs.', 'f'))
+        self.assertEqual((nadia.birth_day, nadia.birth_month, nadia.birth_year), ('14', '3', '1985'))
+        self.assertEqual((nadia.mobile, nadia.optin_email, nadia.optin_sms), ('99230596', True, False))
+        self.assertFalse(Partner.search([('customer_code', '=', 'numCliente')]))
+        samia = Partner.search([('customer_code', '=', '9940222222')])
+        self.assertFalse(samia.title)                   # an address in the civility column is not a title
+        self.assertEqual(samia.country_id.code, 'FR')
+        self.assertNotIn('CENTRAL', wizard.result)      # CENTRAL is not a store
+
+        sage = ['Article', 'Catégori', 'Désignation    ', 'Code à barre', 'Etat', 'Marque ', 'Marque', 'Ligne', 'Axe',
+                'Sous Axe', 'Nature', 'CREDAT_0']
+        rows = [sage,
+                ['100000000', 'CAFV', "BON D'ACHAT", '100000000', 1, 'M0074', 'YVES ROCHER', 'DIVERS', 'DIVERS',
+                 'DIVERS', '0', datetime(2023, 11, 30)],
+                ['SAGE100', 'CDISC', 'LUM 4 VAO BLANC', '5689500', 1, 'M0074', 'YVES ROCHER', 'LUM 4', 'MAQ SAGE',
+                 'ONGLES SAGE', 'VERNIS', datetime(2014, 5, 28)],
+                ['SAGE101', 'CDISC', 'LUM 4 VAO ROSE', '5712100', 0, 'M0074', 'YVES ROCHER', 'LUM 4', 'MAQ SAGE',
+                 'ONGLES SAGE', 'VERNIS', datetime(2014, 5, 28)]]
+        wizard = self._import(rows, archive_inactive=True)
+        self.assertEqual(wizard.file_type, 'article_sage')
+        Template = self.env['product.template'].with_context(active_test=False)
+        self.assertFalse(Template.search([('default_code', '=', '100000000')]))      # the coupon article
+        blanc = Template.search([('default_code', '=', 'SAGE100')])
+        self.assertEqual((blanc.name, blanc.barcode, blanc.yr_brand, blanc.yr_axe_id.name, blanc.yr_sub_axe_id.name),
+                         ('LUM 4 VAO BLANC', '5689500', 'YVES ROCHER', 'MAQ SAGE', 'ONGLES SAGE'))
+        self.assertEqual(blanc.yr_status, 'Actif')
+        self.assertFalse(Template.search([('default_code', '=', 'SAGE101')]).active)
+
+    def test_coupons_skipped_and_motifs(self):
+        day = datetime.combine(date.today() - timedelta(days=2), datetime.min.time())
+        rows = [DETAIL_HEADER,
+                self._detail(7199001, day, 'RIM', 'VEND', None, 'ZZ1', 3660009560001, 'CRAYON', 1, 23, 0, 23,
+                             'ECHANGE'),
+                self._detail(7199001, day, 'RIM', 'VEND', None, 'Y13051967', None, 'COUPON', 1, 10, 100, 0),
+                self._detail(7199001, day, 'RIM', 'VEND', None, '100000000', None, "BON D'ACHAT", 1, 10, 0, 10),
+                self._detail(7199001, day, 'RIM', 'VEND', None, 'ZZ2', 3660009560002, 'CREME', 1, 18, 100, 0,
+                             'CADEAU_PTS')]
+        wizard = self._import(rows)
+        lines = self.env['yr.legacy.sale.line'].search([('ticket', '=', '7199001')])
+        self.assertEqual(sorted(lines.mapped('product_ref')), ['ZZ1', 'ZZ2'])
+        self.assertIn('coupon', wizard.result.lower())
+        motifs = lines.mapped('motif_id')
+        self.assertEqual(sorted(motifs.mapped('name')), ['CADEAU_PTS', 'ECHANGE'])
+        self.assertEqual(motifs.filtered(lambda m: m.name == 'ECHANGE').type, 'exchange')
+        self.env['yr.legacy.sale.line']._yr_make_pos_orders()
+        order = self.env['pos.order'].search([('yr_fastmag_ticket', '=', 'YR_YOUG/7199001')])
+        self.assertEqual(sorted(order.lines.mapped('crm_motif_id.name')), ['CADEAU_PTS', 'ECHANGE'])
+        # a campaign is a motif too
+        campaign = self.env['loyalty.tier.campaign'].create({'name': 'Fête des mères test', 'date_end': date.today()})
+        self.assertEqual(self.env['loyalty.motif'].search([('campaign_id', '=', campaign.id)]).type, 'campaign')
 
     def test_sales_become_pos_orders(self):
         """Each imported ticket becomes a POS order of a closed « historique fastmag » session; the CRM counts it
