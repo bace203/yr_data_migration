@@ -671,9 +671,20 @@ class TestMigrationImport(TransactionCase):
         self.env['yr.legacy.sale.line']._yr_make_pos_orders()
         order = self.env['pos.order'].search([('yr_fastmag_ticket', '=', 'YR_YOUG/7199001')])
         self.assertEqual(sorted(order.lines.mapped('crm_motif_id.name')), ['CADEAU_PTS', 'ECHANGE'])
-        # a campaign is a motif too
+        # a campaign is a motif too: its name typed as the motif counts the ticket as a return of the campaign
         campaign = self.env['loyalty.tier.campaign'].create({'name': 'Fête des mères test', 'date_end': date.today()})
         self.assertEqual(self.env['loyalty.motif'].search([('campaign_id', '=', campaign.id)]).type, 'campaign')
+        rows = [DETAIL_HEADER,
+                self._detail(7199002, day, 'RIM', 'VEND', None, 'ZZ1', 3660009560001, 'CRAYON', 2, 23, 0, 46,
+                             'Fête des mères test'),
+                self._detail(7199002, day, 'RIM', 'VEND', None, 'ZZ2', 3660009560002, 'CREME', 1, 18, 0, 18)]
+        self._import(rows)
+        self.env['yr.legacy.sale.line']._yr_make_pos_orders()
+        campaign.action_refresh_results()
+        self.assertEqual((campaign.return_count, campaign.revenue), (1, 64.0))
+        data = self.env['loyalty.crm.dashboard'].get_data(campaign_id=campaign.id, date_from=day.date())
+        self.assertEqual(data['current']['tickets'], 1)
+        self.assertEqual([m['name'] for m in data['motifs']], ['Fête des mères test'])
 
     def test_sales_become_pos_orders(self):
         """Each imported ticket becomes a POS order of a closed « historique fastmag » session; the CRM counts it
