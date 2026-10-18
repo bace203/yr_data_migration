@@ -24,9 +24,9 @@ BATCH = 500
 FILE_TYPES = [
     ('article_sage', 'Articles Sage X3 (Article, Catégori, Code à barre…)'),
     ('client_detail', 'Clients détail (Client, CarteFidelite, Civilite…)'),
-    ('article', 'Articles (fiche article fastmag, ancien format)'),
-    ('client_new', 'Clients 2017-2026 (CardNumbre…)'),
-    ('client_old', 'Clients ancien système (numCliente…)'),
+    ('article', 'Articles (ancien format fastmag, remplacé par Sage X3)'),
+    ('client_new', 'Clients 2017-2026 (ancien format, remplacé par « Clients détail »)'),
+    ('client_old', 'Clients ancien système (ancien format, remplacé par « Clients détail »)'),
     ('client_codes', 'Codes clients fastmag (CodeClient Y…, carte fidélité)'),
     ('client_ca', 'CA clients (2 dernières années)'),
     ('sales_detail', 'Détail des ventes (ticket, utilisateur, vendeur)'),
