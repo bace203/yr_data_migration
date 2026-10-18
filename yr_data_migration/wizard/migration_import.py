@@ -121,6 +121,7 @@ TITLE_ALIASES = [
 LAST_WINS = {'article_sage': {'brand'}}    # two columns with the same header: the last one holds the name
 COUPON_CATEGORIES = {'CAFV'}                  # « BON D'ACHAT »: a coupon is not a product
 COUPON_REF = re.compile(r'^Y\d{6,}$')          # coupon code typed / scanned instead of an article barcode
+DEDUCED_REASON = 'Remise (déduite)'
 STAMP_REFS = {'DTT', 'TIMBRE'}      # « droit de timbre sur ticket »: not an article
 MAX_NOTES = 100000                   # lines of the detailed report (Excel)
 
@@ -337,6 +338,10 @@ class YrMigrationImport(models.TransientModel):
                                  readonly=False, help='Reconnu automatiquement d\'après les en-têtes.')
     # articles
     create_categories = fields.Boolean('Créer les catégories PdV manquantes (axe › sous-axe)', default=True)
+    deduce_motif = fields.Boolean(
+        'Déduire le motif des lignes remisées', default=True,
+        help='L\'historique ne dit pas comment une promotion a été faite. Une ligne remisée (au moins 1 %) sans motif '
+             'reçoit le motif « Remise (déduite) », pour qu\'elle compte dans les statistiques de promotion.')
     archive_inactive = fields.Boolean('Archiver les articles au statut autre que « Actif »', default=False)
     update_prices = fields.Boolean('Mettre à jour les prix des articles existants', default=True)
     # customers
@@ -1457,6 +1462,12 @@ class YrMigrationImport(models.TransientModel):
         self.env['yr.legacy.sale.line'].sudo()._link_employees()
 
     # ── sales detail: one line per ticket line, cashier and seller ───────
+    def _deduced_reason(self, item):
+        """No motif in the file but the line is discounted: the promotion is deduced from the discount."""
+        if self.deduce_motif and not item.get('stamp') and (number(item.get('discount')) or 0) >= 1:
+            return DEDUCED_REASON
+        return ''
+
     def _import_sales_detail(self, stats, errors):
         SaleLine = self.env['yr.legacy.sale.line'].sudo()
         stores = self._stores()
@@ -1561,7 +1572,7 @@ class YrMigrationImport(models.TransientModel):
                 'product_line': text(item.get('line')) or False, 'is_stamp': item['stamp'],
                 'qty': number(item.get('qty')) or 0.0, 'price_unit': number(item.get('price')) or 0.0,
                 'discount': number(item.get('discount')) or 0.0, 'amount': total,
-                'reason': text(item.get('reason')) or False, 'comment': text(item.get('comment')) or False,
+                'reason': text(item.get('reason')) or self._deduced_reason(item) or False, 'comment': text(item.get('comment')) or False,
             }
             found = existing.get((item['shop'], item['ticket'], item['sequence']))
             if found and self.env.context.get('yr_resume'):

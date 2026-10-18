@@ -687,6 +687,18 @@ class TestMigrationImport(TransactionCase):
             view = self.env['loyalty.crm.order.line'].search([('order_id.reference', 'ilike', str(ticket))])
             self.assertEqual(view.motif_names, ' ; '.join(expected))
 
+    def test_motif_deduced_from_discount(self):
+        day = datetime.combine(date.today() - timedelta(days=2), datetime.min.time())
+        rows = [DETAIL_HEADER,
+                self._detail(7199020, day, 'RIM', 'VEND', None, 'ZD1', 3660009562001, 'CRAYON', 1, 20, 25, 15),
+                self._detail(7199020, day, 'RIM', 'VEND', None, 'ZD2', 3660009562002, 'CREME', 1, 18, 0, 18)]
+        self._import(rows)
+        lines = self.env['yr.legacy.sale.line'].search([('ticket', '=', '7199020')])
+        self.assertEqual({l.product_ref: l.motif_id.name for l in lines}, {'ZD1': 'Remise (déduite)', 'ZD2': False})
+        self._import([DETAIL_HEADER, self._detail(7199021, day, 'RIM', 'VEND', None, 'ZD3', 3660009562003, 'X', 1, 20,
+                                                  25, 15)], deduce_motif=False)
+        self.assertFalse(self.env['yr.legacy.sale.line'].search([('ticket', '=', '7199021')]).motif_id)
+
     def test_coupons_skipped_and_motifs(self):
         day = datetime.combine(date.today() - timedelta(days=2), datetime.min.time())
         rows = [DETAIL_HEADER,
