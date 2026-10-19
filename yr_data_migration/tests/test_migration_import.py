@@ -645,7 +645,7 @@ class TestMigrationImport(TransactionCase):
         wizard = self._import(rows, archive_inactive=True)
         self.assertEqual(wizard.file_type, 'article_sage')
         Template = self.env['product.template'].with_context(active_test=False)
-        self.assertFalse(Template.search([('default_code', '=', '100000000')]))      # the coupon article
+        self.assertTrue(Template.search([('default_code', '=', '100000000')]))      # every article is imported, « bon d'achat » ones too
         blanc = Template.search([('default_code', '=', 'SAGE100')])
         self.assertEqual((blanc.name, blanc.barcode, blanc.yr_brand, blanc.yr_axe_id.name, blanc.yr_sub_axe_id.name),
                          ('LUM 4 VAO BLANC', '5689500', 'YVES ROCHER', 'MAQ SAGE', 'ONGLES SAGE'))

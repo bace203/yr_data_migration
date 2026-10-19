@@ -120,7 +120,6 @@ TITLE_ALIASES = [
     ('base.res_partner_title_prof', ('professeur', 'pr', 'prof', 'professor'), False),
 ]
 LAST_WINS = {'article_sage': {'brand'}}    # two columns with the same header: the last one holds the name
-COUPON_CATEGORIES = {'CAFV'}                  # « BON D'ACHAT »: a coupon is not a product
 DEDUCED_REASON = 'Remise (déduite)'
 FREE_REASON = 'Gratuité (déduite)'           # articles whose code starts with Y are free gifts
 STAMP_REFS = {'DTT', 'TIMBRE'}      # « droit de timbre sur ticket »: not an article
@@ -298,6 +297,11 @@ def xls_sheet_names(content):
     return _xlrd().open_workbook(file_contents=content, on_demand=True).sheet_names()
 
 
+def xls_count(content, sheet=None):
+    book = _xlrd().open_workbook(file_contents=content, on_demand=True)
+    return (book.sheet_by_name(sheet) if sheet else book.sheet_by_index(0)).nrows
+
+
 def xls_rows(content, sheet=None):
     """Rows of an old Excel file (.xls): dates become datetimes, whole numbers integers."""
     xlrd = _xlrd()
@@ -461,7 +465,7 @@ class YrMigrationImport(models.TransientModel):
         if is_xls(content):                       # old Excel file (.xls)
             sheet = self.env.context.get('yr_sheet')
             rows = xls_rows(content, sheet)
-            total = 0
+            total = xls_count(content, sheet)
         elif name.endswith(('.xlsx', '.xlsm')) or content[:2] == b'PK':
             import openpyxl
             workbook = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
@@ -625,7 +629,7 @@ class YrMigrationImport(models.TransientModel):
                   'p-0"><i class="fa fa-download"/> %s</a></p>' % (log.id, report_name, html_escape(
                       _('Télécharger le rapport détaillé (Excel) : résumé et lignes non importées')))
         log.write({'state': 'done', 'result': result, 'date_end': fields.Datetime.now(), 'label': _('Terminé'),
-                   'done': max(log.done, log.total), 'report_filename': report_name,
+                   'done': max(log.done, log.total), 'total': max(log.done, log.total), 'report_filename': report_name,
                    'report_file': base64.b64encode(self._report_xlsx(summary, notes))})
         self.write({'state': 'done', 'result': result})
         return {'type': 'ir.actions.act_window', 'name': _('Reprise fastmag'), 'res_model': self._name,
@@ -707,7 +711,6 @@ class YrMigrationImport(models.TransientModel):
             'already': _('Lignes déjà importées (reprise : non refaites)'),
             'added_to_known': _('Lignes manquantes ajoutées à des ventes déjà importées'),
             'coupons': _('Lignes de coupon / bon d\'achat (non importées)'),
-            'coupon_articles': _('Articles « bon d\'achat » (non importés)'),
             'no_card': _('Clients sans vrai n° de carte fidélité (non importés)'),
             'imported_no_card': _('Clients importés sans n° de carte (rattachés à leurs ventes par le code client)'),
             'shared_cards': _('Cartes partagées : clients importés sans carte (la carte reste sur la première fiche)'),
@@ -788,11 +791,6 @@ class YrMigrationImport(models.TransientModel):
             if not (text(item.get('code')) or text(item.get('barcode'))):
                 continue
             if kind == 'article_sage':
-                if text(item.get('category')).upper() in COUPON_CATEGORIES:
-                    stats['coupon_articles'] += 1
-                    self._note(item['_line'], text(item.get('code')), _('Non importé'),
-                               _('bon d\'achat (%s) : un coupon n\'est pas un article', text(item.get('name'))))
-                    continue
                 # Etat 1 = actif; Nature « 0 » = empty
                 item['status'] = 'Actif' if text(item.get('status')) in ('1', '') else 'Inactif'
                 if text(item.get('nature')) == '0':
@@ -812,7 +810,9 @@ class YrMigrationImport(models.TransientModel):
         unit = self.env.ref('uom.product_uom_unit')
         seen_barcodes = set()
         to_create = []
-        for item in items:
+        for position, item in enumerate(items, start=1):
+            if position % 200 == 0:
+                self._progress(position, len(items), _('Enregistrement des articles'))
             code, barcode = text(item.get('code')), text(item.get('barcode'))
             owner = by_barcode.get(barcode) if barcode else None
             # a line with a reference matches on it: two fastmag references may share a barcode
