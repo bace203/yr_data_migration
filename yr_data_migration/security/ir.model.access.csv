@@ -11,3 +11,5 @@ access_yr_client_code_user,yr.client.code user,model_yr_client_code,base.group_u
 access_yr_client_code_manager,yr.client.code manager,model_yr_client_code,loyalty_tier_marketing.group_loyalty_tier_manager,1,1,1,1
 access_yr_migration_queue_manager,yr.migration.queue manager,model_yr_migration_queue,loyalty_tier_marketing.group_loyalty_tier_manager,1,1,1,1
 access_yr_migration_queue_stock,yr.migration.queue stock,model_yr_migration_queue,stock.group_stock_manager,1,1,1,1
+access_yr_unknown_article_manager,yr.unknown.article manager,model_yr_unknown_article,loyalty_tier_marketing.group_loyalty_tier_manager,1,0,0,0
+access_yr_unknown_article_stock,yr.unknown.article stock,model_yr_unknown_article,stock.group_stock_manager,1,0,0,0

@@ -108,4 +108,71 @@
     <menuitem id="menu_yr_legacy_sale_line_pos" name="Ventes fastmag par vendeur"
               parent="point_of_sale.menu_point_rep" action="action_yr_legacy_sale_line" sequence="90"
               groups="point_of_sale.group_pos_manager"/>
+    <record id="yr_unknown_article_view_list" model="ir.ui.view">
+        <field name="name">yr.unknown.article.list</field>
+        <field name="model">yr.unknown.article</field>
+        <field name="arch" type="xml">
+            <list string="Articles inconnus (ventes fastmag)" create="false" edit="false" delete="false"
+                  decoration-success="in_catalog">
+                <field name="code"/>
+                <field name="name"/>
+                <field name="motifs"/>
+                <field name="lines" sum="Total"/>
+                <field name="tickets" optional="show"/>
+                <field name="qty" optional="show" sum="Total"/>
+                <field name="amount" sum="Total"/>
+                <field name="avg_price" optional="show"/>
+                <field name="avg_discount" optional="show"/>
+                <field name="date_first" optional="show"/>
+                <field name="date_last" optional="show"/>
+                <field name="shops" optional="hide"/>
+                <field name="axe" optional="hide"/>
+                <field name="product_line" optional="hide"/>
+                <field name="reasons" optional="hide"/>
+                <field name="product_ref" optional="hide"/>
+                <field name="barcode" optional="hide"/>
+                <field name="in_catalog" widget="boolean" optional="show"/>
+                <button name="action_open_lines" type="object" icon="fa-list" title="Lignes de vente de cet article"/>
+            </list>
+        </field>
+    </record>
+    <record id="yr_unknown_article_view_search" model="ir.ui.view">
+        <field name="name">yr.unknown.article.search</field>
+        <field name="model">yr.unknown.article</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="code"/>
+                <field name="name"/>
+                <field name="motifs"/>
+                <field name="axe"/>
+                <field name="product_line"/>
+                <filter name="in_catalog" string="Dans le catalogue maintenant (à réimporter)" domain="[('in_catalog', '=', True)]"/>
+                <filter name="not_in_catalog" string="Toujours absents du catalogue" domain="[('in_catalog', '=', False)]"/>
+                <filter name="with_motif" string="Avec un motif" domain="[('motifs', '!=', False)]"/>
+                <group expand="0" string="Grouper par">
+                    <filter name="g_motif" string="Motif" context="{'group_by': 'motifs'}"/>
+                    <filter name="g_axe" string="Axe" context="{'group_by': 'axe'}"/>
+                    <filter name="g_line" string="Ligne" context="{'group_by': 'product_line'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+    <record id="action_yr_unknown_article" model="ir.actions.act_window">
+        <field name="name">Articles inconnus (ventes fastmag)</field>
+        <field name="res_model">yr.unknown.article</field>
+        <field name="view_mode">list</field>
+        <field name="help" type="html"><p class="o_view_nocontent_smiling_face">Aucun article inconnu</p>
+            <p>Tous les articles des ventes importées sont dans le catalogue.</p></field>
+    </record>
+    <record id="action_yr_unknown_article_export" model="ir.actions.server">
+        <field name="name">Exporter les articles inconnus (Excel)</field>
+        <field name="model_id" ref="model_yr_unknown_article"/>
+        <field name="state">code</field>
+        <field name="code">action = model.action_export_excel()</field>
+    </record>
+    <menuitem id="menu_yr_unknown_article" name="Articles inconnus (ventes fastmag)"
+              parent="loyalty_tier_marketing.menu_loyalty_tier_config" action="action_yr_unknown_article" sequence="92"/>
+    <menuitem id="menu_yr_unknown_article_export" name="Exporter les articles inconnus (Excel)"
+              parent="loyalty_tier_marketing.menu_loyalty_tier_config" action="action_yr_unknown_article_export"
+              sequence="93"/>
 </odoo>

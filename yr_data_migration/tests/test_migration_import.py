@@ -813,6 +813,21 @@ class TestMigrationImport(TransactionCase):
         self.assertEqual(Template.search_count([('default_code', '=', 'ARC101')]), 1)
         self.assertIn('rchiv', wizard.result)
 
+    def test_unknown_articles_list_and_export(self):
+        day = datetime.combine(date.today() - timedelta(days=5), datetime.min.time())
+        self._import([DETAIL_HEADER,
+                      self._detail(7199401, day, 'RIM', 'VEND', None, 'ZZINC1', 3660009569991, 'CREME INCONNUE', 2, 20,
+                                   30, 28, 'SLDETE26'),
+                      self._detail(7199402, day, 'RIM', 'VEND', None, 'ZZINC1', 3660009569991, 'CREME INCONNUE', 1, 20,
+                                   0, 20)])
+        article = self.env['yr.unknown.article'].search([('code', '=', 'ZZINC1')])
+        self.assertEqual((article.lines, article.tickets, article.qty, article.motifs, article.in_catalog),
+                         (2, 2, 3.0, 'SLDETE26', False))
+        self.assertEqual(article.name, 'CREME INCONNUE / 3660009569991')
+        self.assertEqual(len(self.env['yr.legacy.sale.line'].search(article._line_domain())), 2)
+        action = self.env['yr.unknown.article'].action_export_excel()
+        self.assertIn('/web/content/', action['url'])
+
     def test_coupons_skipped_and_motifs(self):
         day = datetime.combine(date.today() - timedelta(days=2), datetime.min.time())
         rows = [DETAIL_HEADER,
