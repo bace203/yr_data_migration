@@ -40,6 +40,9 @@
                 <field name="yr_fastmag_ticket"/>
                 <filter name="yr_fastmag" string="Historique fastmag" domain="[('yr_fastmag_ticket', '!=', False)]"/>
                 <filter name="yr_not_fastmag" string="Ventes Posify" domain="[('yr_fastmag_ticket', '=', False)]"/>
+                <filter name="yr_unknown_article" string="Avec un article inconnu (fastmag)"
+                        domain="[('lines.product_id.default_code', '=', 'FASTMAG-INCONNU')]"/>
+                <separator/>
                 <filter name="yr_by_seller" string="Vendeur" context="{'group_by': 'yr_seller_id'}"/>
                 <filter name="yr_by_seller_name" string="Vendeur (fastmag)" context="{'group_by': 'yr_seller_name'}"/>
                 <filter name="yr_by_cashier_name" string="Caissier (fastmag)"
