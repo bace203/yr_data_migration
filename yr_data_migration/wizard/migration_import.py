@@ -122,6 +122,7 @@ TITLE_ALIASES = [
 LAST_WINS = {'article_sage': {'brand'}}    # two columns with the same header: the last one holds the name
 COUPON_CATEGORIES = {'CAFV'}                  # « BON D'ACHAT »: a coupon is not a product
 DEDUCED_REASON = 'Remise (déduite)'
+FREE_REASON = 'Gratuité (déduite)'           # articles whose code starts with Y are free gifts
 STAMP_REFS = {'DTT', 'TIMBRE'}      # « droit de timbre sur ticket »: not an article
 MAX_NOTES = 100000                   # lines of the detailed report (Excel)
 
@@ -1550,8 +1551,13 @@ class YrMigrationImport(models.TransientModel):
 
     # ── sales detail: one line per ticket line, cashier and seller ───────
     def _deduced_reason(self, item):
-        """No motif in the file but the line is discounted: the promotion is deduced from the discount."""
-        if self.deduce_motif and not item.get('stamp') and (number(item.get('discount')) or 0) >= 1:
+        """No motif in the file: a free gift is told by its article code (Y…), a promotion by the discount."""
+        if not self.deduce_motif or item.get('stamp'):
+            return ''
+        code = (text(item.get('ref')) or text(item.get('ean'))).upper()
+        if code.startswith('Y'):
+            return FREE_REASON
+        if (number(item.get('discount')) or 0) >= 1:
             return DEDUCED_REASON
         return ''
 
@@ -1751,6 +1757,8 @@ class YrMigrationImport(models.TransientModel):
         SaleLine._link_partners_by_code(codes_seen)             # customers without a card, or sharing one
         SaleLine.flush_model()
         SaleLine._link_motifs()
+        if not self.env.context.get('yr_queue_item'):          # a queue does it once, after its last file
+            self.env['loyalty.motif'].sudo()._infer_campaigns()
         if self.create_pos_orders:
             stats['pos_pending'] = len(tickets)
             SaleLine.flush_model()

@@ -783,6 +783,19 @@ class TestMigrationImport(TransactionCase):
         self.assertEqual(self.env['yr.legacy.sale.line'].search_count([('ticket', 'in', ['7199201', '7199202'])]), 2)
         self.assertFalse(files.exists())               # the uploaded files are removed once imported
 
+    def test_campaign_inferred_from_motif(self):
+        first, last = date.today() - timedelta(days=20), date.today() - timedelta(days=5)
+        rows = [DETAIL_HEADER]
+        for ticket, day in ((7199301, first), (7199302, last), (7199303, last - timedelta(days=3))):
+            rows.append(self._detail(ticket, datetime.combine(day, datetime.min.time()), 'RIM', 'VEND', None, 'ZZ1',
+                                     3660009560001, 'CRAYON', 1, 23, 30, 16, 'SLDETE26'))
+        self._import(rows)
+        campaign = self.env['loyalty.tier.campaign'].search([('name', '=', 'SLDETE26')])
+        self.assertEqual((campaign.date_start, campaign.date_end, campaign.state, campaign.from_history),
+                         (first, last, 'done', True))
+        self.assertEqual(self.env['loyalty.motif'].search([('name', '=', 'SLDETE26')]).campaign_id, campaign)
+        self.assertEqual(self.env['loyalty.motif'].search([('name', '=', 'Remise (déduite)')]).campaign_id.id, False)
+
     def test_coupons_skipped_and_motifs(self):
         day = datetime.combine(date.today() - timedelta(days=2), datetime.min.time())
         rows = [DETAIL_HEADER,
@@ -798,11 +811,14 @@ class TestMigrationImport(TransactionCase):
         self.assertEqual(sorted(lines.mapped('product_ref')), ['100000000', 'Y88074', 'ZZ1', 'ZZ2'])      # only the « coupon » label is left out
         self.assertIn('coupon', wizard.result.lower())
         motifs = lines.mapped('motif_id')
-        self.assertEqual(sorted(motifs.mapped('name')), ['CADEAU_PTS', 'ECHANGE', 'Remise (déduite)'])   # + the free bon d'achat line
+        self.assertEqual(sorted(motifs.mapped('name')), ['CADEAU_PTS', 'ECHANGE', 'Gratuité (déduite)', 'Remise (déduite)'])   # + the Y… article, the free bon d'achat
         self.assertEqual(motifs.filtered(lambda m: m.name == 'ECHANGE').type, 'exchange')
         self.env['yr.legacy.sale.line']._yr_make_pos_orders()
         order = self.env['pos.order'].search([('yr_fastmag_ticket', '=', 'YR_YOUG/7199001')])
-        self.assertEqual(sorted(order.lines.mapped('crm_motif_id.name')), ['CADEAU_PTS', 'ECHANGE', 'Remise (déduite)'])
+        self.assertEqual(sorted(order.lines.mapped('crm_motif_id.name')),
+                         ['CADEAU_PTS', 'ECHANGE', 'Gratuité (déduite)', 'Remise (déduite)'])
+        self.assertEqual(self.env['loyalty.motif'].search([('name', '=', 'Gratuité (déduite)')]).type, 'free')
+        self.assertEqual(self.env['loyalty.motif'].search([('name', '=', 'CADEAU_PTS')]).type, 'gift_points')
         # a campaign is a motif too: its name typed as the motif counts the ticket as a return of the campaign
         campaign = self.env['loyalty.tier.campaign'].create({'name': 'Fête des mères test', 'date_end': date.today()})
         self.assertEqual(self.env['loyalty.motif'].search([('campaign_id', '=', campaign.id)]).type, 'campaign')

@@ -68,6 +68,12 @@ class YrMigrationQueue(models.Model):
         item._process()
         if self._next_item():
             self._trigger_cron()
+        else:                                           # the last file: the campaigns hidden in the motifs
+            try:
+                self.env['loyalty.motif'].sudo()._infer_campaigns()
+                self.env['yr.migration.import']._commit()
+            except Exception:  # noqa: BLE001 - the import itself is done
+                _logger.exception('fastmag: campagnes depuis les motifs')
 
     def _process(self):
         self.ensure_one()

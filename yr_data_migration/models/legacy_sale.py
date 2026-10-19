@@ -449,6 +449,7 @@ class YrLegacySaleLine(models.Model):
             if self._yr_can_commit():
                 self.env.cr.commit()
             if not more:
+                self.env['loyalty.motif'].sudo()._infer_campaigns()      # campaign results need the POS orders
                 return
             if time.monotonic() - start > 240:
                 self.env.ref('yr_data_migration.ir_cron_yr_fastmag_pos_orders')._trigger()

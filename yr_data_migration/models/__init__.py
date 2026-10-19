@@ -12,3 +12,4 @@ from . import client_code
 from . import res_config_settings
 from . import forecast_dimensions
 from . import migration_queue
+from . import loyalty_motif
