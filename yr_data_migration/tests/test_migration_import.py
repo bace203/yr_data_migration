@@ -825,7 +825,11 @@ class TestMigrationImport(TransactionCase):
                          (2, 2, 3.0, 'SLDETE26', False))
         self.assertEqual(article.name, 'CREME INCONNUE / 3660009569991')
         self.assertEqual(len(self.env['yr.legacy.sale.line'].search(article._line_domain())), 2)
-        action = self.env['yr.unknown.article'].action_export_excel()
+        manager = self.env['res.users'].create({
+            'name': 'Gestionnaire CRM', 'login': 'crm_manager_unknown', 'email': 'crm@example.com',
+            'groups_id': [(6, 0, [self.env.ref('base.group_user').id,
+                                  self.env.ref('loyalty_tier_marketing.group_loyalty_tier_manager').id])]})
+        action = self.env['yr.unknown.article'].with_user(manager).action_export_excel()     # read-only model: no write right needed
         self.assertIn('/web/content/', action['url'])
 
     def test_coupons_skipped_and_motifs(self):

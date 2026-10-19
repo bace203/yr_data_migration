@@ -124,6 +124,6 @@ class YrUnknownArticle(models.Model):
                 'Lignes limitées aux %s plus récentes.', MAX_LINES)]]})
         result = self.env['loyalty.crm.dashboard'].export_xlsx(sheets, 'articles_inconnus_fastmag')
         attachment = self.env['ir.attachment'].create({
-            'name': result['filename'], 'datas': result['data'], 'res_model': self._name, 'res_id': 0,
+            'name': result['filename'], 'datas': result['data'],
             'mimetype': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'})
         return {'type': 'ir.actions.act_url', 'url': '/web/content/%s?download=true' % attachment.id, 'target': 'self'}
