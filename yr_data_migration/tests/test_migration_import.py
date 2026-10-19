@@ -796,6 +796,23 @@ class TestMigrationImport(TransactionCase):
         self.assertEqual(self.env['loyalty.motif'].search([('name', '=', 'SLDETE26')]).campaign_id, campaign)
         self.assertEqual(self.env['loyalty.motif'].search([('name', '=', 'Remise (déduite)')]).campaign_id.id, False)
 
+    def test_reimport_archives_existing_articles(self):
+        sage = ['Article', 'Catégori', 'Désignation    ', 'Code à barre', 'Etat', 'Marque ', 'Marque', 'Ligne', 'Axe',
+                'Sous Axe', 'Nature', 'CREDAT_0']
+        rows = [sage,
+                ['ARC100', 'CDISC', 'ARTICLE ACTIF', '5600001', 1, 'M0074', 'YVES ROCHER', 'L', 'AXE', 'SOUS', 'N',
+                 datetime(2014, 5, 28)],
+                ['ARC101', 'CDISC', 'ARTICLE ARRETE', '5600002', 0, 'M0074', 'YVES ROCHER', 'L', 'AXE', 'SOUS', 'N',
+                 datetime(2014, 5, 28)]]
+        self._import(rows)                                           # first import: everything stays active
+        Template = self.env['product.template'].with_context(active_test=False)
+        self.assertTrue(Template.search([('default_code', '=', 'ARC101')]).active)
+        wizard = self._import(rows, archive_inactive=True)           # reimport with « Archiver »
+        self.assertFalse(Template.search([('default_code', '=', 'ARC101')]).active)
+        self.assertTrue(Template.search([('default_code', '=', 'ARC100')]).active)
+        self.assertEqual(Template.search_count([('default_code', '=', 'ARC101')]), 1)
+        self.assertIn('rchiv', wizard.result)
+
     def test_coupons_skipped_and_motifs(self):
         day = datetime.combine(date.today() - timedelta(days=2), datetime.min.time())
         rows = [DETAIL_HEADER,
