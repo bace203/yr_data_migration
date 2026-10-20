@@ -58,6 +58,9 @@ class YrLegacySaleLine(models.Model):
     reason = fields.Char('Motif (texte du fichier)')
     motif_id = fields.Many2one('loyalty.motif', 'Motif', index='btree_not_null', ondelete='set null')
     comment = fields.Char('Commentaire')
+    pos_error = fields.Char('Erreur commande PdV', index='btree_not_null', copy=False,
+                            help='Pourquoi la commande de ce ticket n\'a pas pu être créée. « Créer les commandes PdV » '
+                            '(Paramètres) réessaie.')
     pos_order_id = fields.Many2one('pos.order', 'Commande PdV', index='btree_not_null', ondelete='set null',
                                    copy=False, help='Commande du point de vente créée pour ce ticket.')
 
@@ -344,7 +347,7 @@ class YrLegacySaleLine(models.Model):
             return 0, False
         cr.execute(SQL("""
             SELECT shop_code, ticket FROM yr_legacy_sale_line
-             WHERE pos_order_id IS NULL AND store_id = ANY(%s)
+             WHERE pos_order_id IS NULL AND pos_error IS NULL AND store_id = ANY(%s)
              GROUP BY shop_code, ticket ORDER BY min(date), shop_code, ticket LIMIT %s
         """, ready, max_tickets))
         keys = set(cr.fetchall())
@@ -355,7 +358,8 @@ class YrLegacySaleLine(models.Model):
                    cashier_id, cashier_name, product_id, is_stamp, name, product_ref, qty, price_unit, discount,
                    amount, motif_id
               FROM yr_legacy_sale_line
-             WHERE pos_order_id IS NULL AND store_id IS NOT NULL AND ticket = ANY(%s) AND shop_code = ANY(%s)
+             WHERE pos_order_id IS NULL AND pos_error IS NULL AND store_id IS NOT NULL AND ticket = ANY(%s)
+               AND shop_code = ANY(%s)
              ORDER BY shop_code, ticket, sequence, id
         """, list({t for _s, t in keys}), list({s for s, _t in keys})))
         tickets = defaultdict(list)
@@ -369,7 +373,7 @@ class YrLegacySaleLine(models.Model):
         stores = {store.id: store for store in self.env['loyalty.store'].sudo().with_context(active_test=False)
                   .browse({rows[0]['store_id'] for rows in tickets.values()})}
         has_employee = 'employee_id' in self.env['pos.order']._fields
-        vals_list, partner_ids = [], set()
+        vals_list, partner_ids, vals_by_key = [], set(), {}
         for number, ((shop, ticket), rows) in enumerate(sorted(tickets.items()), start=1):
             store = stores[rows[0]['store_id']]
             session = sessions[store.id]
@@ -401,10 +405,27 @@ class YrLegacySaleLine(models.Model):
             if has_employee:
                 vals['employee_id'] = cashier
             vals_list.append(vals)
+            vals_by_key[(shop, ticket)] = vals
             if partner:
                 partner_ids.add(partner)
-        orders = self.env['pos.order'].sudo().with_context(
-            tracking_disable=True, mail_create_nolog=True, mail_notrack=True).create(vals_list)
+        Order = self.env['pos.order'].sudo().with_context(tracking_disable=True, mail_create_nolog=True, mail_notrack=True)
+        failed = {}
+        try:
+            with cr.savepoint():
+                orders = Order.create(vals_list)
+        except Exception as error:  # noqa: BLE001 - one bad ticket must not block the others: one by one
+            _logger.warning('fastmag: lot de %s tickets en échec (%s) : essai ticket par ticket', len(vals_list), error)
+            orders = Order
+            for key, vals in vals_by_key.items():
+                try:
+                    with cr.savepoint():
+                        orders |= Order.create([vals])
+                except Exception as ticket_error:  # noqa: BLE001
+                    failed[key] = str(ticket_error.args[0] if ticket_error.args else ticket_error)[:240]
+        for (shop, ticket), message in failed.items():
+            cr.execute('UPDATE yr_legacy_sale_line SET pos_error = %s WHERE shop_code = %s AND ticket = %s',
+                       [message, shop, ticket])
+            _logger.warning('fastmag: commande du ticket %s/%s non créée : %s', shop, ticket, message)
         self.env['pos.order.line'].flush_model()
         cr.execute(SQL("""
             UPDATE yr_legacy_sale_line l SET pos_order_id = pl.order_id
@@ -414,8 +435,8 @@ class YrLegacySaleLine(models.Model):
         self.invalidate_model(['pos_order_id'])
         if partner_ids:
             self._yr_refresh_partners(partner_ids)
-        cr.execute(SQL('SELECT 1 FROM yr_legacy_sale_line WHERE pos_order_id IS NULL AND store_id = ANY(%s) LIMIT 1',
-                       ready))
+        cr.execute(SQL('SELECT 1 FROM yr_legacy_sale_line WHERE pos_order_id IS NULL AND pos_error IS NULL '
+                       'AND store_id = ANY(%s) LIMIT 1', ready))
         return len(orders), bool(cr.fetchone())
 
     @api.model

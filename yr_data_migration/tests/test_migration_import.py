@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Import of files shaped like the real fastmag exports (made-up people and articles)."""
 import base64
+from unittest.mock import patch
 import io
 from datetime import date, datetime, timedelta
 
@@ -831,6 +832,29 @@ class TestMigrationImport(TransactionCase):
                                   self.env.ref('loyalty_tier_marketing.group_loyalty_tier_manager').id])]})
         action = self.env['yr.unknown.article'].with_user(manager).action_export_excel()     # read-only model: no write right needed
         self.assertIn('/web/content/', action['url'])
+
+    def test_a_bad_ticket_does_not_block_the_orders(self):
+        day = datetime.combine(date.today() - timedelta(days=6), datetime.min.time())
+        self._import([DETAIL_HEADER,
+                      self._detail(7199501, day, 'RIM', 'VEND', None, 'ZZ1', 3660009560001, 'CRAYON', 1, 23, 0, 23),
+                      self._detail(7199502, day, 'RIM', 'VEND', None, 'ZZ1', 3660009560001, 'CRAYON', 1, 23, 0, 23)])
+        Line = self.env['yr.legacy.sale.line']
+        original = type(self.env['pos.order']).create
+        calls = []
+
+        def create(model, vals_list, *args, **kwargs):
+            if len(vals_list) > 1 or any(v.get('yr_fastmag_ticket', '').endswith('/7199501') for v in vals_list):
+                calls.append(len(vals_list))
+                raise ValueError('ticket cassé')
+            return original(model, vals_list, *args, **kwargs)
+        with patch.object(type(self.env['pos.order']), 'create', create):
+            Line._yr_make_pos_orders()
+        bad = Line.search([('ticket', '=', '7199501')])
+        good = Line.search([('ticket', '=', '7199502')])
+        self.assertTrue(bad.pos_error and not bad.pos_order_id)
+        self.assertTrue(good.pos_order_id and not good.pos_error)
+        again = Line._yr_make_pos_orders()                  # the bad one is set aside, no endless retry
+        self.assertEqual(again, (0, False))
 
     def test_coupons_skipped_and_motifs(self):
         day = datetime.combine(date.today() - timedelta(days=2), datetime.min.time())

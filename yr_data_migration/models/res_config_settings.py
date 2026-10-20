@@ -148,12 +148,20 @@ class ResConfigSettings(models.TransientModel):
         background."""
         self._yr_check_admin()
         Line = self.env['yr.legacy.sale.line'].sudo()
+        self.env.cr.execute('UPDATE yr_legacy_sale_line SET pos_error = NULL WHERE pos_error IS NOT NULL')    # try again
         linked = Line._yr_link_stores_products()
         linked['employees'] = Line._link_employees()          # « Nom(s) fastmag » filled in since the import
         Line._yr_trigger_pos_orders()
+        self.env.cr.execute("""SELECT shop_code, COUNT(DISTINCT ticket) FROM yr_legacy_sale_line
+                              WHERE store_id IS NULL AND pos_order_id IS NULL GROUP BY 1 ORDER BY 2 DESC LIMIT 10""")
+        no_store = ', '.join('%s (%s tickets)' % row for row in self.env.cr.fetchall())
+        linked['no_store'] = no_store or _('aucun')
         return {'type': 'ir.actions.client', 'tag': 'display_notification', 'params': {
             'title': _('Commandes du point de vente'), 'type': 'success', 'sticky': True,
             'message': _('%(stores)s ligne(s) rattachée(s) à leur magasin, %(products)s à leur article et '
                          '%(employees)s à leur vendeur / caissier. '
-                         'Les commandes PdV manquantes sont créées en arrière-plan (Point de Vente › Commandes).',
+                         'Les commandes PdV manquantes sont créées en arrière-plan (Point de Vente › Commandes). '
+                         'Magasins fastmag sans correspondance (aucune commande possible) : %(no_store)s. '
+                         'Un ticket dont la commande échoue est mis de côté avec son erreur (liste « Ventes fastmag » › '
+                         'filtre « Commande en erreur »).',
                          **linked)}}
