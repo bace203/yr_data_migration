@@ -12,6 +12,9 @@ class ResCompany(models.Model):
              'séparés par une virgule (YR_MAHSOUNA,YR_MAHSN). C\'est le champ « Code magasin fastmag » du magasin de '
              'la société.')
 
+    yr_store_number = fields.Char('N° magasin', compute='_compute_yr_fastmag_code',
+                                  help='Numéro du magasin de cette société (champ « Code » du magasin).')
+
     def _yr_stores(self):
         stores = self.env['loyalty.store'].sudo().with_context(active_test=False).search(
             [('company_id', 'in', self.ids)], order='sequence, id')
@@ -26,6 +29,7 @@ class ResCompany(models.Model):
         for company in self:
             store = stores.get(company.id or company._origin.id)
             company.yr_fastmag_code = store.yr_fastmag_code if store else False
+            company.yr_store_number = store.code if store else False
 
     def _inverse_yr_fastmag_code(self):
         stores = self._yr_stores()

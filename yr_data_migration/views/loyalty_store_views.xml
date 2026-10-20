@@ -16,6 +16,7 @@
         <field name="inherit_id" ref="loyalty_tier_marketing.loyalty_store_view_list"/>
         <field name="arch" type="xml">
             <field name="code" position="after">
+                <field name="yr_store_number" optional="show"/>
                 <field name="yr_fastmag_code" optional="show"/>
             </field>
         </field>
@@ -29,6 +30,8 @@
                 <div class="d-flex align-items-center gap-2">
                     <label for="yr_fastmag_code" class="mb-0 text-muted">Code magasin fastmag</label>
                     <field name="yr_fastmag_code" placeholder="YR_MAHSOUNA,YR_MAHSN" class="w-auto"/>
+                    <label for="yr_store_number" class="mb-0 text-muted ms-3">N° magasin</label>
+                    <field name="yr_store_number" class="w-auto fw-bold"/>
                 </div>
             </xpath>
         </field>
