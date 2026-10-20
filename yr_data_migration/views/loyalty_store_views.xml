@@ -16,7 +16,6 @@
         <field name="inherit_id" ref="loyalty_tier_marketing.loyalty_store_view_list"/>
         <field name="arch" type="xml">
             <field name="code" position="after">
-                <field name="yr_store_number" optional="show"/>
                 <field name="yr_fastmag_code" optional="show"/>
             </field>
         </field>
@@ -42,6 +41,7 @@
         <field name="inherit_id" ref="base.view_company_tree"/>
         <field name="arch" type="xml">
             <field name="name" position="after">
+                <field name="yr_store_number" optional="show"/>
                 <field name="yr_fastmag_code" optional="show"/>
             </field>
         </field>
