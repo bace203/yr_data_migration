@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from odoo import _, api, fields, models
+from odoo import tools, _, api, fields, models
 from odoo.exceptions import UserError
 from odoo.modules import module as odoo_module
 
@@ -25,6 +25,7 @@ class ResConfigSettings(models.TransientModel):
     yr_sales_without_order = fields.Integer('Lignes de ventes fastmag sans commande PdV',
                                             compute='_compute_yr_fastmag_counts')
     yr_fastmag_order_count = fields.Integer('Commandes PdV fastmag', compute='_compute_yr_fastmag_counts')
+    yr_sales_diagnostic = fields.Html('Pourquoi des lignes sans commande', compute='_compute_yr_fastmag_counts', sanitize=False)
 
     @api.depends('company_id')                      # computed on the settings screen (new record) too
     def _compute_yr_fastmag_counts(self):
@@ -33,9 +34,58 @@ class ResConfigSettings(models.TransientModel):
         without = cr.fetchone()[0]
         cr.execute('SELECT count(*) FROM pos_order WHERE yr_fastmag_ticket IS NOT NULL')
         orders = cr.fetchone()[0]
+        diagnostic = self._yr_sales_diagnostic() if without else ''
         for settings in self:
             settings.yr_sales_without_order = without
             settings.yr_fastmag_order_count = orders
+            settings.yr_sales_diagnostic = diagnostic
+
+    @staticmethod
+    def _yr_store_guess(code, stores):
+        """Stores whose name looks like an abbreviated fastmag code (YR_MAHSN → MAHSOUNA, YR_MENZ6 → MENZAH 6)."""
+        import re
+        import unicodedata
+
+        def flat(text):
+            text = unicodedata.normalize('NFKD', text or '').encode('ascii', 'ignore').decode()
+            return re.sub(r'[^a-z0-9]', '', text.lower())
+        key = flat(re.sub(r'^YR[_\s-]*', '', code or '', flags=re.I))
+        if len(key) < 3:
+            return stores.browse()
+
+        def subsequence(short, long):
+            it = iter(long)
+            return all(ch in it for ch in short)
+        return stores.filtered(lambda st: subsequence(key, flat(st.name)) and flat(st.name)[:1] == key[:1])[:3]
+
+    def _yr_sales_diagnostic(self):
+        """Why the lines have no POS order: unknown store, ticket in error, or simply waiting."""
+        cr = self.env.cr
+        cr.execute("""SELECT shop_code, COUNT(*), COUNT(DISTINCT ticket) FROM yr_legacy_sale_line
+                        WHERE pos_order_id IS NULL AND store_id IS NULL GROUP BY 1 ORDER BY 2 DESC LIMIT 8""")
+        no_store = cr.fetchall()
+        cr.execute("""SELECT pos_error, COUNT(*), COUNT(DISTINCT shop_code || '/' || ticket) FROM yr_legacy_sale_line
+                        WHERE pos_order_id IS NULL AND pos_error IS NOT NULL GROUP BY 1 ORDER BY 2 DESC LIMIT 5""")
+        errors = cr.fetchall()
+        cr.execute("""SELECT COUNT(*) FROM yr_legacy_sale_line
+                        WHERE pos_order_id IS NULL AND store_id IS NOT NULL AND pos_error IS NULL""")
+        waiting = cr.fetchone()[0]
+        html = '<ul class="mb-0">'
+        if waiting:
+            html += '<li>%s</li>' % _('%s ligne(s) en attente : la création tourne en arrière-plan.', waiting)
+        stores = self.env['loyalty.store'].sudo().with_context(active_test=False).search([])
+        for code, lines, tickets in no_store:
+            guess = self._yr_store_guess(code, stores)
+            html += '<li>%s</li>' % _(
+                'Magasin fastmag « %(code)s » non reconnu : %(lines)s ligne(s), %(tickets)s ticket(s)%(guess)s. '
+                'Ajoutez ce code dans « Code magasin fastmag » du magasin (plusieurs codes séparés par une virgule), '
+                'puis « Créer les commandes PdV » : les lignes sont rattachées sans réimporter.',
+                code=tools.html_escape(code), lines=lines, tickets=tickets,
+                guess=(_(' — peut-être : %s', ', '.join(tools.html_escape(g.display_name) for g in guess)) if guess else ''))
+        for message, lines, tickets in errors:
+            html += '<li>%s</li>' % _('Erreur « %(message)s » : %(lines)s ligne(s), %(tickets)s ticket(s).',
+                                      message=tools.html_escape(message), lines=lines, tickets=tickets)
+        return html + '</ul>'
 
     def _yr_check_admin(self):
         if not self.env.user.has_group('base.group_system'):

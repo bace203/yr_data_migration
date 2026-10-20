@@ -13,6 +13,9 @@
                             <field name="yr_fastmag_order_count" class="fw-bold"/> commandes créées,
                             <field name="yr_sales_without_order" class="fw-bold"/> lignes de ventes sans commande
                         </div>
+                        <div class="mt-2" invisible="not yr_sales_without_order">
+                            <field name="yr_sales_diagnostic" nolabel="1"/>
+                        </div>
                         <button name="action_yr_make_pos_orders" type="object" string="Créer les commandes PdV"
                                 class="btn-primary mt-2" icon="fa-cogs"/>
                     </setting>
