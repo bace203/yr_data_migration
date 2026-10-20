@@ -864,6 +864,8 @@ class TestMigrationImport(TransactionCase):
         company.invalidate_recordset()
         self.assertEqual(company.yr_fastmag_code, 'YR_TEST_A, YR_TEST_B')
         self.assertEqual(company.yr_store_number, store.code)
+        self.assertIn('yr_store_sort', self.env['res.company']._fields)
+        self.assertTrue(self.env['res.company'].search([], order='yr_store_sort, id'))      # sortable: stored
 
     def test_coupons_skipped_and_motifs(self):
         day = datetime.combine(date.today() - timedelta(days=2), datetime.min.time())

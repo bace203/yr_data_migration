@@ -41,7 +41,7 @@
         <field name="inherit_id" ref="base.view_company_tree"/>
         <field name="arch" type="xml">
             <field name="name" position="after">
-                <field name="yr_store_number" optional="show"/>
+                <field name="yr_store_sort" optional="show"/>
                 <field name="yr_fastmag_code" optional="show"/>
             </field>
         </field>
