@@ -20,4 +20,27 @@
             </field>
         </field>
     </record>
+    <record id="res_company_form_fastmag_code" model="ir.ui.view">
+        <field name="name">res.company.form.fastmag.code</field>
+        <field name="model">res.company</field>
+        <field name="inherit_id" ref="base.view_company_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//div[hasclass('oe_title')]" position="inside">
+                <div class="d-flex align-items-center gap-2">
+                    <label for="yr_fastmag_code" class="mb-0 text-muted">Code magasin fastmag</label>
+                    <field name="yr_fastmag_code" placeholder="YR_MAHSOUNA,YR_MAHSN" class="w-auto"/>
+                </div>
+            </xpath>
+        </field>
+    </record>
+    <record id="res_company_list_fastmag_code" model="ir.ui.view">
+        <field name="name">res.company.list.fastmag.code</field>
+        <field name="model">res.company</field>
+        <field name="inherit_id" ref="base.view_company_tree"/>
+        <field name="arch" type="xml">
+            <field name="name" position="after">
+                <field name="yr_fastmag_code" optional="show"/>
+            </field>
+        </field>
+    </record>
 </odoo>

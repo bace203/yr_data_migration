@@ -856,6 +856,14 @@ class TestMigrationImport(TransactionCase):
         again = Line._yr_make_pos_orders()                  # the bad one is set aside, no endless retry
         self.assertEqual(again, (0, False))
 
+    def test_fastmag_code_typed_on_the_company(self):
+        store = self.env['loyalty.store'].search([('company_id', '!=', False)], limit=1)
+        company = store.company_id
+        company.yr_fastmag_code = 'YR_TEST_A, YR_TEST_B'
+        self.assertEqual(store.yr_fastmag_code, 'YR_TEST_A, YR_TEST_B')
+        company.invalidate_recordset()
+        self.assertEqual(company.yr_fastmag_code, 'YR_TEST_A, YR_TEST_B')
+
     def test_coupons_skipped_and_motifs(self):
         day = datetime.combine(date.today() - timedelta(days=2), datetime.min.time())
         rows = [DETAIL_HEADER,
