@@ -931,6 +931,8 @@ class TestMigrationImport(TransactionCase):
         session = orders.session_id
         self.assertEqual((len(session), session.state, session.yr_fastmag), (1, 'closed', True))
         self.assertEqual(session.config_id.crm_store_id, self.store)
+        # the name must end with a number: Posify names the till's next session from it (else the till cannot open)
+        self.assertTrue(session.name.split('/')[-1].isdigit(), session.name)
         ticket = orders.filtered(lambda o: o.yr_fastmag_ticket == 'YR_YOUG/8199667')
         self.assertEqual((ticket.partner_id, ticket.amount_total, len(ticket.lines)), (wael, 46.0, 2))
         self.assertEqual((ticket.yr_seller_name, ticket.yr_cashier_name), ('SLIMENI POS', 'RIM'))

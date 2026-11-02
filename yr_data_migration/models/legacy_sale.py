@@ -321,9 +321,15 @@ class YrLegacySaleLine(models.Model):
             session = Session.with_company(config.company_id).with_context(onboarding_creation=True).create(
                 {'config_id': config.id})
             session.write({'state': 'closed', 'stop_at': fields.Datetime.now(), 'yr_fastmag': True,
-                           'name': '%s/FASTMAG-%s' % (config.name, config.id)})
+                           'name': self._yr_history_session_name(config)})
         cache[store.id] = session
         return session
+
+    @api.model
+    def _yr_history_session_name(self, config):
+        """Posify numbers the next session of a till from the LAST segment of the last session's name
+        (« Till/00012 » → 00013): the history session must therefore end with a number, else the till cannot open."""
+        return '%s/FASTMAG/00000' % config.name
 
     @api.model
     def _yr_make_pos_orders(self, max_tickets=POS_BATCH):
