@@ -93,6 +93,11 @@
                     <filter name="group_yr_status" string="Statut" context="{'group_by': 'yr_status'}"/>
                     <filter name="group_yr_packaging" string="Contenance" context="{'group_by': 'yr_packaging'}"/>
                 </group>
+                <!-- left panel: click an axe / sous-axe to see its articles (Point de Vente › Produits, Inventaire…) -->
+                <searchpanel>
+                    <field name="yr_axe_id" string="Axe" icon="fa-sitemap" select="multi" enable_counters="1"/>
+                    <field name="yr_sub_axe_id" string="Sous-axe" icon="fa-tags" select="multi" enable_counters="1"/>
+                </searchpanel>
             </xpath>
         </field>
     </record>
