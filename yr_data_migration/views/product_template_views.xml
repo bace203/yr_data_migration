@@ -6,7 +6,7 @@
         <field name="inherit_id" ref="product.product_template_form_view"/>
         <field name="arch" type="xml">
             <xpath expr="//notebook" position="inside">
-                <page string="Fiche article" name="yr_fastmag">
+                <page string="Fiche article (Sage X3)" name="yr_fastmag">
                     <group>
                         <group>
                             <field name="yr_axe_id" options="{'no_create': True}"/>
@@ -82,7 +82,7 @@
                 <field name="yr_packaging"/>
             </field>
             <xpath expr="//search" position="inside">
-                <group string="Fiche article (fastmag)">
+                <group string="Fiche article (Sage X3)">
                     <filter name="group_yr_axe" string="Axe" context="{'group_by': 'yr_axe_id'}"/>
                     <filter name="group_yr_sub_axe" string="Sous-axe" context="{'group_by': 'yr_sub_axe_id'}"/>
                     <filter name="group_yr_nature" string="Nature" context="{'group_by': 'yr_nature'}"/>
@@ -93,7 +93,7 @@
                     <filter name="group_yr_status" string="Statut" context="{'group_by': 'yr_status'}"/>
                     <filter name="group_yr_packaging" string="Contenance" context="{'group_by': 'yr_packaging'}"/>
                 </group>
-                <!-- left panel: click an axe / sous-axe to see its articles (Point de Vente › Produits, Inventaire…) -->
+                <!-- left panel (Sage X3 classification): click an axe / sous-axe to see its articles (Point de Vente › Produits, Inventaire…) -->
                 <searchpanel>
                     <field name="yr_axe_id" string="Axe" icon="fa-sitemap" select="multi" enable_counters="1"/>
                     <field name="yr_sub_axe_id" string="Sous-axe" icon="fa-tags" select="multi" enable_counters="1"/>
