@@ -22,7 +22,9 @@ class ResPartner(models.Model):
     yr_seller_id = fields.Many2one('hr.employee', 'Créé par (vendeuse)', index=True,
                                    help='Vendeuse qui a créé la fiche dans fastmag (code vendeuse du fichier).')
     yr_legacy_segment = fields.Char('Segment fastmag', help='Ex. FID, OC, PA, MO')
-    yr_npai = fields.Boolean('NPAI', help='N\'habite pas à l\'adresse indiquée (courrier revenu).')
+    # the CRM field (segments « NPAI », exclusions of postal mailings): the import fills it through this one
+    yr_npai = fields.Boolean('NPAI', related='crm_npai', readonly=False,
+                             help='N\'habite pas à l\'adresse indiquée (courrier revenu).')
 
     # purchases made before Posify: frozen once set, visible to the « données de migration » group only
     yr_legacy_amount = fields.Monetary('Montant TTC à la migration', currency_field='yr_currency_id', readonly=True,

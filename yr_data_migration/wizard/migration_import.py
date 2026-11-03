@@ -935,7 +935,7 @@ class YrMigrationImport(models.TransientModel):
         if title and not vals['crm_gender']:
             vals['crm_gender'] = self._cache().get('title_gender', {}).get(title, False)
         if kind == 'client_old' and item.get('npai') not in (None, ''):
-            vals['yr_npai'] = bool(number(item.get('npai')))
+            vals['crm_npai'] = bool(number(item.get('npai')))
         birthday = parse_birthday(item.get('birthday'), unknown_years)
         if kind == 'client_detail':             # day, month and year in three columns (0 = unknown)
             day, month, year = (int(number(item.get(k)) or 0) for k in ('birth_d', 'birth_m', 'birth_y'))
