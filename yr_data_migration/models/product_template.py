@@ -22,3 +22,6 @@ class ProductTemplate(models.Model):
     yr_status = fields.Char('Statut')
     yr_create_date_legacy = fields.Date('Date de création de l\'article')
     yr_supplier_code = fields.Char('Code fournisseur')
+    # the fastmag article code is kept in the standard « Référence interne »: shown (and exported) under its name
+    yr_fastmag_code = fields.Char('Code fastmag', related='default_code', readonly=True,
+                                  help='Référence article de fastmag (= Référence interne).')

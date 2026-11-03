@@ -40,6 +40,27 @@
                 <field name="yr_line" optional="hide"/>
                 <field name="yr_nature" optional="hide"/>
                 <field name="yr_status" optional="hide"/>
+                <field name="yr_fastmag_code" optional="hide"/>
+            </field>
+        </field>
+    </record>
+    <!-- the same columns in Fidélité &amp; CRM › Articles -->
+    <record id="product_template_list_crm_fastmag" model="ir.ui.view">
+        <field name="name">product.template.list.crm.fastmag</field>
+        <field name="model">product.template</field>
+        <field name="inherit_id" ref="loyalty_tier_marketing.product_template_list_view_crm"/>
+        <field name="arch" type="xml">
+            <field name="name" position="after">
+                <field name="yr_fastmag_code" optional="hide"/>
+                <field name="yr_axe_id" optional="show"/>
+                <field name="yr_sub_axe_id" optional="show"/>
+                <field name="yr_nature" optional="show"/>
+                <field name="yr_brand" optional="hide"/>
+                <field name="yr_line" optional="hide"/>
+                <field name="yr_category_code" optional="hide"/>
+                <field name="yr_gender" optional="hide"/>
+                <field name="yr_status" optional="hide"/>
+                <field name="yr_packaging" optional="hide"/>
             </field>
         </field>
     </record>
@@ -49,14 +70,28 @@
         <field name="inherit_id" ref="product.product_template_search_view"/>
         <field name="arch" type="xml">
             <field name="name" position="after">
+                <field name="default_code" string="Code fastmag"/>
                 <field name="yr_axe_id"/>
                 <field name="yr_sub_axe_id"/>
+                <field name="yr_nature"/>
+                <field name="yr_brand"/>
                 <field name="yr_line"/>
+                <field name="yr_category_code"/>
+                <field name="yr_gender"/>
+                <field name="yr_status"/>
+                <field name="yr_packaging"/>
             </field>
             <xpath expr="//search" position="inside">
-                <group>
+                <group string="Fiche article (fastmag)">
                     <filter name="group_yr_axe" string="Axe" context="{'group_by': 'yr_axe_id'}"/>
                     <filter name="group_yr_sub_axe" string="Sous-axe" context="{'group_by': 'yr_sub_axe_id'}"/>
+                    <filter name="group_yr_nature" string="Nature" context="{'group_by': 'yr_nature'}"/>
+                    <filter name="group_yr_brand" string="Marque" context="{'group_by': 'yr_brand'}"/>
+                    <filter name="group_yr_line" string="Ligne" context="{'group_by': 'yr_line'}"/>
+                    <filter name="group_yr_category" string="Catégorie article" context="{'group_by': 'yr_category_code'}"/>
+                    <filter name="group_yr_gender" string="Genre" context="{'group_by': 'yr_gender'}"/>
+                    <filter name="group_yr_status" string="Statut" context="{'group_by': 'yr_status'}"/>
+                    <filter name="group_yr_packaging" string="Contenance" context="{'group_by': 'yr_packaging'}"/>
                 </group>
             </xpath>
         </field>
