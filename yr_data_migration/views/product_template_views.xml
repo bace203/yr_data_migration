@@ -6,9 +6,10 @@
         <field name="inherit_id" ref="product.product_template_form_view"/>
         <field name="arch" type="xml">
             <xpath expr="//notebook" position="inside">
-                <page string="Fiche article (Sage X3)" name="yr_fastmag">
+                <page string="Fiche article (Sage X3 / fastmag)" name="yr_fastmag">
                     <group>
                         <group>
+                            <field name="yr_fastmag_code"/>
                             <field name="yr_axe_id" options="{'no_create': True}"/>
                             <field name="yr_sub_axe_id" options="{'no_create': True}"/>
                             <field name="yr_category_code"/>
@@ -40,7 +41,7 @@
                 <field name="yr_line" optional="hide"/>
                 <field name="yr_nature" optional="hide"/>
                 <field name="yr_status" optional="hide"/>
-                <field name="yr_fastmag_code" optional="hide"/>
+                <field name="yr_fastmag_code" optional="show"/>
             </field>
         </field>
     </record>
@@ -51,7 +52,7 @@
         <field name="inherit_id" ref="loyalty_tier_marketing.product_template_list_view_crm"/>
         <field name="arch" type="xml">
             <field name="name" position="after">
-                <field name="yr_fastmag_code" optional="hide"/>
+                <field name="yr_fastmag_code" optional="show"/>
                 <field name="yr_axe_id" optional="show"/>
                 <field name="yr_sub_axe_id" optional="show"/>
                 <field name="yr_nature" optional="show"/>
@@ -70,7 +71,7 @@
         <field name="inherit_id" ref="product.product_template_search_view"/>
         <field name="arch" type="xml">
             <field name="name" position="after">
-                <field name="default_code" string="Code fastmag"/>
+                <field name="yr_fastmag_code"/>
                 <field name="yr_axe_id"/>
                 <field name="yr_sub_axe_id"/>
                 <field name="yr_nature"/>

@@ -264,6 +264,14 @@ class YrLegacySaleLine(models.Model):
                      WHERE store_id IS NULL AND shop_code = %s
                 """, store.id, store.company_id.id, config.id or None, shop))
                 linked['stores'] += cr.rowcount
+        # the « Réf. fastmag » first (the sales come from fastmag), then the Sage X3 reference, then the barcode
+        cr.execute("""
+            UPDATE yr_legacy_sale_line l SET product_id = pp.id
+              FROM product_product pp JOIN product_template pt ON pt.id = pp.product_tmpl_id
+             WHERE l.product_id IS NULL AND NOT COALESCE(l.is_stamp, FALSE) AND l.product_ref IS NOT NULL
+               AND pt.yr_fastmag_code = l.product_ref
+        """)
+        linked['products'] += cr.rowcount
         for column in ('default_code', 'barcode'):
             source = 'product_ref' if column == 'default_code' else 'barcode'
             cr.execute(SQL("""

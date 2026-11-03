@@ -142,6 +142,19 @@ class TestMigrationImport(TransactionCase):
             self.assertEqual(tmpl.yr_axe_id.name, 'CAPILLAIRE TEST')
         self.assertEqual((first.barcode, second.barcode), ('9990005648712', False))
         self.assertIn('Mis à jour : <b>2</b>', wizard.result)
+        self.assertEqual((first.yr_fastmag_code, second.yr_fastmag_code), ('T100191452', 'T100191954'))
+
+    def test_fastmag_code_kept_apart_from_sage_reference(self):
+        """Sage X3 article (Référence interne) + fastmag file with another code, same barcode: one article, the
+        fastmag code in « Réf. fastmag », the Sage X3 reference unchanged."""
+        Template = self.env['product.template']
+        sage = Template.create({'name': 'Gel douche', 'default_code': 'X3-0001', 'barcode': '9990005648729',
+                                'is_storable': True})
+        self._import([ARTICLE_HEADER, article('FM777', '9990005648729', 'Gel douche', 'CAPILLAIRE TEST',
+                                              'SOIN CHEVEUX', 12)])
+        self.assertEqual(Template.search_count([('barcode', '=', '9990005648729')]), 1)
+        self.assertEqual((sage.default_code, sage.yr_fastmag_code), ('X3-0001', 'FM777'))
+        self.assertEqual(Template.search([('yr_fastmag_code', '=', 'FM777')]), sage)
 
     def test_crm_import_screen_does_the_fastmag_import(self):
         rows = [ARTICLE_HEADER, article('T100102999', '9990005911999', 'Stick', 'MAQUILLAGE TEST', 'TEINT TEST', 9)]

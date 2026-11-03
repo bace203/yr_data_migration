@@ -800,12 +800,18 @@ class YrMigrationImport(models.TransientModel):
         Template = self.env['product.template'].with_context(active_test=False)
         codes = [text(i.get('code')) for i in items if text(i.get('code'))]
         barcodes = [text(i.get('barcode')) for i in items if text(i.get('barcode'))]
-        by_code, by_barcode = {}, {}
+        by_code, by_barcode, by_fastmag = {}, {}, {}
+        fastmag = kind == 'article'             # the fastmag file: its code is the « Réf. fastmag »
         for chunk in range(0, max(len(codes), len(barcodes)), 5000):
-            for tmpl in Template.search(['|', ('default_code', 'in', codes[chunk:chunk + 5000]),
-                                         ('barcode', 'in', barcodes[chunk:chunk + 5000])]):
+            domain = ['|', ('default_code', 'in', codes[chunk:chunk + 5000]),
+                      ('barcode', 'in', barcodes[chunk:chunk + 5000])]
+            if fastmag:
+                domain = ['|', ('yr_fastmag_code', 'in', codes[chunk:chunk + 5000])] + domain
+            for tmpl in Template.search(domain):
                 by_code.setdefault(tmpl.default_code, tmpl)
                 by_barcode.setdefault(tmpl.barcode, tmpl)
+                if tmpl.yr_fastmag_code:
+                    by_fastmag.setdefault(tmpl.yr_fastmag_code, tmpl)
         categ_cache, supplier_cache = {}, {}
         unit = self.env.ref('uom.product_uom_unit')
         seen_barcodes = set()
@@ -816,7 +822,11 @@ class YrMigrationImport(models.TransientModel):
             code, barcode = text(item.get('code')), text(item.get('barcode'))
             owner = by_barcode.get(barcode) if barcode else None
             # a line with a reference matches on it: two fastmag references may share a barcode
-            if code:
+            if code and fastmag:
+                # fastmag article: its fastmag code, else the same reference (articles first created from fastmag),
+                # else the Sage X3 article of the same barcode (another reference)
+                tmpl = by_fastmag.get(code) or by_code.get(code) or (owner if owner and owner is not True else None)
+            elif code:
                 tmpl = by_code.get(code)
                 if not tmpl and owner and owner is not True and not owner.default_code:
                     tmpl = owner                       # article created before without reference
@@ -859,6 +869,8 @@ class YrMigrationImport(models.TransientModel):
             if tmpl:
                 if code and not tmpl.default_code:
                     vals['default_code'] = code
+                if code and fastmag and tmpl.yr_fastmag_code != code:
+                    vals['yr_fastmag_code'] = code     # the Sage X3 « Référence interne » is never changed
                 if barcode and not tmpl.barcode:
                     vals['barcode'] = barcode
                 if price is not None and self.update_prices:
@@ -872,6 +884,7 @@ class YrMigrationImport(models.TransientModel):
             else:
                 vals.update({
                     'name': text(item.get('name')) or code or barcode, 'default_code': code or False,
+                    'yr_fastmag_code': (code or False) if fastmag else False,
                     'barcode': barcode or False, 'list_price': price or 0.0, 'type': 'consu',
                     'is_storable': True, 'available_in_pos': True, 'sale_ok': True,
                     'uom_id': unit.id, 'uom_po_id': unit.id,
@@ -881,6 +894,8 @@ class YrMigrationImport(models.TransientModel):
                 to_create.append(vals)
                 if code:
                     by_code[code] = True       # same code twice in the file: created once
+                    if fastmag:
+                        by_fastmag[code] = True
             if len(to_create) >= BATCH:
                 stats['created'] += len(Template.create(to_create))
                 to_create = []
@@ -1603,7 +1618,10 @@ class YrMigrationImport(models.TransientModel):
         products = {}
         refs.discard('')
         eans.discard('')
-        for product in Product.search(['|', ('default_code', 'in', list(refs)), ('barcode', 'in', list(eans))]):
+        for product in Product.search(['|', '|', ('yr_fastmag_code', 'in', list(refs)),
+                                       ('default_code', 'in', list(refs)), ('barcode', 'in', list(eans))]):
+            if product.yr_fastmag_code:
+                products.setdefault(('fm', product.yr_fastmag_code), product)
             products.setdefault(('ref', product.default_code), product)
             products.setdefault(('ean', product.barcode), product)
         # lines already imported: only their key, id and order (never whole records: millions of lines)
@@ -1671,7 +1689,9 @@ class YrMigrationImport(models.TransientModel):
             elif not card:
                 stats['anonymous'] += 1
             ref, ean = text(item.get('ref')), text(item.get('ean'))
-            product = False if item['stamp'] else products.get(('ref', ref)) or products.get(('ean', ean))
+            # the sales come from fastmag: their reference is the « Réf. fastmag », else the Sage X3 one, else the EAN
+            product = False if item['stamp'] else (products.get(('fm', ref)) or products.get(('ref', ref))
+                                                   or products.get(('ean', ean)))
             if not item['stamp'] and not product:
                 stats['unknown_products'] += 1
                 count = unknown_refs.get(ref or ean, (0,))[0]
