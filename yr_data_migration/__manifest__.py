@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 {
     'name': 'YR – Reprise fastmag (articles, clients, CA)',
-    'version': '18.0.1.13.0',
+    'version': '18.0.1.14.0',
     'category': 'Sales',
     'summary': 'Champs fastmag manquants (articles, clients, vendeur en caisse) et import des fichiers fastmag',
     'description': """
@@ -25,7 +25,7 @@ S'appuie sur Fidélité & CRM (loyalty_tier_marketing) pour la fiche client (nai
 """,
     'author': 'SATEM',
     'license': 'LGPL-3',
-    'depends': ['loyalty_tier_marketing', 'point_of_sale', 'purchase', 'hr'],
+    'depends': ['loyalty_tier_marketing', 'point_of_sale', 'pos_sale', 'purchase', 'hr'],
     'external_dependencies': {'python': ['openpyxl']},
     'data': [
         'security/security.xml',

@@ -710,7 +710,7 @@ class YrMigrationImport(models.TransientModel):
             'companies': _('Sociétés (filiales) créées'), 'pos': _('Points de vente (caisses) créés'),
             'already': _('Lignes déjà importées (reprise : non refaites)'),
             'added_to_known': _('Lignes manquantes ajoutées à des ventes déjà importées'),
-            'coupons': _('Lignes de coupon / bon d\'achat (non importées)'),
+            'coupons': _('Lignes de coupon / bon d\'achat (importées sur leur ticket)'),
             'no_card': _('Clients sans vrai n° de carte fidélité (non importés)'),
             'imported_no_card': _('Clients importés sans n° de carte (rattachés à leurs ventes par le code client)'),
             'shared_cards': _('Cartes partagées : clients importés sans carte (la carte reste sur la première fiche)'),
@@ -1567,7 +1567,7 @@ class YrMigrationImport(models.TransientModel):
     # ── sales detail: one line per ticket line, cashier and seller ───────
     def _deduced_reason(self, item):
         """No motif in the file: a free gift is told by its article code (Y…), a promotion by the discount."""
-        if not self.deduce_motif or item.get('stamp'):
+        if not self.deduce_motif or item.get('stamp') or item.get('coupon'):
             return ''
         code = (text(item.get('ref')) or text(item.get('ean'))).upper()
         if code.startswith('Y'):
@@ -1580,7 +1580,7 @@ class YrMigrationImport(models.TransientModel):
     def _line_name(item, product):
         """Label of a sale line; an unknown article gets « name / barcode » (or reference) to be diagnosed."""
         name = text(item.get('name'))
-        if product or item.get('stamp'):
+        if product or item.get('stamp') or item.get('coupon'):
             return name
         code = text(item.get('ean')) or text(item.get('ref'))
         return ' / '.join(part for part in (name, code) if part)
@@ -1601,15 +1601,14 @@ class YrMigrationImport(models.TransientModel):
                 continue
             stats['rows'] += 1
             rank[(shop, ticket)] += 1               # position in the file: stable whatever lines are left out
-            if is_coupon(item):
+            # a coupon / bon d'achat is a line of the ticket like the others (often negative: it lowers the total)
+            item['coupon'] = is_coupon(item)
+            if item['coupon']:
                 stats['coupons'] += 1
-                self._note(item['_line'], ticket, _('Non importé'), _(
-                    'ligne de coupon / bon d\'achat (%s) : les coupons ne sont pas repris', text(item.get('ref'))))
-                continue
             item.update(shop=shop, ticket=ticket, day=day, sequence=rank[(shop, ticket)])
             ref = text(item.get('ref'))
             item['stamp'] = ref.upper() in STAMP_REFS
-            if not item['stamp']:
+            if not item['stamp'] and not item['coupon']:
                 refs.add(ref)
                 eans.add(text(item.get('ean')))
             tickets.add((shop, ticket))
@@ -1690,9 +1689,10 @@ class YrMigrationImport(models.TransientModel):
                 stats['anonymous'] += 1
             ref, ean = text(item.get('ref')), text(item.get('ean'))
             # the sales come from fastmag: their reference is the « Réf. fastmag », else the Sage X3 one, else the EAN
-            product = False if item['stamp'] else (products.get(('fm', ref)) or products.get(('ref', ref))
-                                                   or products.get(('ean', ean)))
-            if not item['stamp'] and not product:
+            special = item['stamp'] or item['coupon']
+            product = False if special else (products.get(('fm', ref)) or products.get(('ref', ref))
+                                             or products.get(('ean', ean)))
+            if not special and not product:
                 stats['unknown_products'] += 1
                 count = unknown_refs.get(ref or ean, (0,))[0]
                 unknown_refs[ref or ean] = (count + 1, text(item.get('name')), ean)
@@ -1711,8 +1711,10 @@ class YrMigrationImport(models.TransientModel):
                 'product_ref': ref or False, 'barcode': ean or False, 'product_id': product.id if product else False,
                 'name': self._line_name(item, product) or False, 'axe': text(item.get('axe')) or False,
                 'product_line': text(item.get('line')) or False, 'is_stamp': item['stamp'],
+                'is_coupon': item['coupon'],
                 'qty': number(item.get('qty')) or 0.0, 'price_unit': number(item.get('price')) or 0.0,
                 'discount': number(item.get('discount')) or 0.0, 'amount': total,
+                'net_price': number(item.get('net_price')) or 0.0,
                 'reason': text(item.get('reason')) or self._deduced_reason(item) or False, 'comment': text(item.get('comment')) or False,
             }
             ticket_key = (item['shop'], item['ticket'])

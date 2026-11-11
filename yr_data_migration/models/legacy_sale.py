@@ -15,6 +15,8 @@ from odoo.tools import SQL
 
 _logger = logging.getLogger(__name__)
 UNKNOWN_PRODUCT_CODE = 'FASTMAG-INCONNU'
+COUPON_PRODUCT_CODE = 'FASTMAG-COUPON'
+AMOUNT_DIGITS = (16, 3)                # dinars have millimes: 3 decimals whatever « Product Price » says
 STAMP_PRODUCT_CODES = ('DTT', 'TIMBRE', 'FASTMAG-DTT')
 POS_BATCH = 1000                       # tickets per batch (commit between batches)
 
@@ -51,10 +53,13 @@ class YrLegacySaleLine(models.Model):
     axe = fields.Char('Axe')
     product_line = fields.Char('Ligne')
     is_stamp = fields.Boolean('Droit de timbre')
+    is_coupon = fields.Boolean('Coupon / bon d\'achat', index=True,
+                               help='Ligne de coupon du ticket fastmag (souvent négative : elle baisse le total).')
     qty = fields.Float('Quantité', digits='Product Unit of Measure')
-    price_unit = fields.Float('Prix', digits='Product Price')
-    discount = fields.Float('Remise (%)')
-    amount = fields.Float('Total TTC', digits='Product Price')
+    price_unit = fields.Float('Prix', digits=AMOUNT_DIGITS)
+    discount = fields.Float('Remise (%)', digits=AMOUNT_DIGITS)
+    amount = fields.Float('Total TTC', digits=AMOUNT_DIGITS)
+    net_price = fields.Float('Prix net', digits=AMOUNT_DIGITS, help='Colonne « Prix net » du fichier fastmag.')
     reason = fields.Char('Motif (texte du fichier)')
     motif_id = fields.Many2one('loyalty.motif', 'Motif', index='btree_not_null', ondelete='set null')
     comment = fields.Char('Commentaire')
@@ -268,7 +273,7 @@ class YrLegacySaleLine(models.Model):
         cr.execute("""
             UPDATE yr_legacy_sale_line l SET product_id = pp.id
               FROM product_product pp JOIN product_template pt ON pt.id = pp.product_tmpl_id
-             WHERE l.product_id IS NULL AND NOT COALESCE(l.is_stamp, FALSE) AND l.product_ref IS NOT NULL
+             WHERE l.product_id IS NULL AND NOT COALESCE(l.is_stamp, FALSE) AND NOT COALESCE(l.is_coupon, FALSE) AND l.product_ref IS NOT NULL
                AND pt.yr_fastmag_code = l.product_ref
         """)
         linked['products'] += cr.rowcount
@@ -277,7 +282,7 @@ class YrLegacySaleLine(models.Model):
             cr.execute(SQL("""
                 UPDATE yr_legacy_sale_line l SET product_id = pp.id
                   FROM product_product pp
-                 WHERE l.product_id IS NULL AND NOT COALESCE(l.is_stamp, FALSE) AND l.%s IS NOT NULL
+                 WHERE l.product_id IS NULL AND NOT COALESCE(l.is_stamp, FALSE) AND NOT COALESCE(l.is_coupon, FALSE) AND l.%s IS NOT NULL
                    AND pp.%s = l.%s
             """, SQL.identifier(source), SQL.identifier(column), SQL.identifier(source)))
             linked['products'] += cr.rowcount
@@ -304,6 +309,15 @@ class YrLegacySaleLine(models.Model):
             'sale_ok': False, 'available_in_pos': False, 'list_price': 0.0, 'taxes_id': [(5, 0, 0)],
             'company_id': False})
         return unknown, stamp
+
+    @api.model
+    def _yr_coupon_product(self):
+        """Article of the coupon lines of the fastmag tickets (negative line of the order)."""
+        Product = self.env['product.product'].sudo().with_context(active_test=False)
+        return Product.search([('default_code', '=', COUPON_PRODUCT_CODE)], limit=1) or Product.create({
+            'name': _('Coupon / bon d\'achat (fastmag)'), 'default_code': COUPON_PRODUCT_CODE, 'type': 'service',
+            'sale_ok': False, 'available_in_pos': False, 'list_price': 0.0, 'taxes_id': [(5, 0, 0)],
+            'company_id': False})
 
     @api.model
     def _yr_history_session(self, store, cache):
@@ -369,8 +383,8 @@ class YrLegacySaleLine(models.Model):
             return 0, False
         cr.execute(SQL("""
             SELECT id, shop_code, ticket, sequence, date, store_id, partner_id, card, seller_id, seller_name,
-                   cashier_id, cashier_name, product_id, is_stamp, name, product_ref, qty, price_unit, discount,
-                   amount, motif_id
+                   cashier_id, cashier_name, product_id, is_stamp, is_coupon, name, product_ref, qty, price_unit,
+                   discount, amount, motif_id
               FROM yr_legacy_sale_line
              WHERE pos_order_id IS NULL AND pos_error IS NULL AND store_id IS NOT NULL AND ticket = ANY(%s)
                AND shop_code = ANY(%s)
@@ -384,6 +398,10 @@ class YrLegacySaleLine(models.Model):
                    [list({r['motif_id'] for rows in tickets.values() for r in rows if r['motif_id']})])
         motif_sets = {mid: [m.id for m in self._motif_chain(reason)] or [mid] for mid, reason in cr.fetchall()}
         unknown, stamp = self._yr_special_products()
+        coupon = self._yr_coupon_product()
+
+        def special(row):
+            return stamp if row['is_stamp'] else coupon if row['is_coupon'] else unknown
         stores = {store.id: store for store in self.env['loyalty.store'].sudo().with_context(active_test=False)
                   .browse({rows[0]['store_id'] for rows in tickets.values()})}
         has_employee = 'employee_id' in self.env['pos.order']._fields
@@ -407,8 +425,8 @@ class YrLegacySaleLine(models.Model):
                 'yr_seller_name': first['seller_name'], 'yr_cashier_name': first['cashier_name'],
                 'lines': [(0, 0, {
                     'name': '%s/%s' % (key, r['sequence']),
-                    'product_id': r['product_id'] or (stamp.id if r['is_stamp'] else unknown.id),
-                    'full_product_name': r['name'] or r['product_ref'] or (stamp if r['is_stamp'] else unknown).name,
+                    'product_id': r['product_id'] or special(r).id,
+                    'full_product_name': r['name'] or r['product_ref'] or special(r).name,
                     'qty': r['qty'] or 0.0, 'price_unit': r['price_unit'] or 0.0, 'discount': r['discount'] or 0.0,
                     'price_subtotal': r['amount'] or 0.0, 'price_subtotal_incl': r['amount'] or 0.0,
                     'tax_ids': [(6, 0, [])], 'yr_fastmag_line_id': r['id'],

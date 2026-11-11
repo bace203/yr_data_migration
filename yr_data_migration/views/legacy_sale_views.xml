@@ -72,7 +72,9 @@
                 <field name="product_id"/>
                 <field name="name"/>
                 <field name="store_id"/>
-                <filter name="articles" string="Articles (sans timbre)" domain="[('is_stamp', '=', False)]"/>
+                <filter name="articles" string="Articles (sans timbre ni coupon)"
+                        domain="[('is_stamp', '=', False), ('is_coupon', '=', False)]"/>
+                <filter name="coupons" string="Coupons / bons d'achat" domain="[('is_coupon', '=', True)]"/>
                 <filter name="identified" string="Clients identifiés" domain="[('card', '!=', False)]"/>
                 <filter name="no_pos_order" string="Sans commande PdV" domain="[('pos_order_id', '=', False)]"/>
                 <filter name="pos_error" string="Commande en erreur" domain="[('pos_error', '!=', False)]"/>

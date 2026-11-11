@@ -64,7 +64,7 @@ class YrUnknownArticle(models.Model):
                                                 OR (l.barcode IS NOT NULL AND p.barcode = l.barcode))), FALSE) AS in_catalog
               FROM yr_legacy_sale_line l
               LEFT JOIN loyalty_motif m ON m.id = l.motif_id
-             WHERE l.product_id IS NULL AND NOT COALESCE(l.is_stamp, FALSE)
+             WHERE l.product_id IS NULL AND NOT COALESCE(l.is_stamp, FALSE) AND NOT COALESCE(l.is_coupon, FALSE)
                AND COALESCE(NULLIF(l.product_ref, ''), l.barcode) IS NOT NULL
              GROUP BY COALESCE(NULLIF(l.product_ref, ''), l.barcode)
             )
@@ -72,7 +72,7 @@ class YrUnknownArticle(models.Model):
 
     def _line_domain(self):
         self.ensure_one()
-        domain = [('product_id', '=', False), ('is_stamp', '=', False)]
+        domain = [('product_id', '=', False), ('is_stamp', '=', False), ('is_coupon', '=', False)]
         if self.product_ref:
             return domain + [('product_ref', '=', self.product_ref)]
         return domain + [('barcode', '=', self.barcode)]
@@ -99,7 +99,7 @@ class YrUnknownArticle(models.Model):
                    l.price_unit, l.discount, l.amount, m.name, l.reason, l.comment, l.seller_name, l.cashier_name,
                    l.card, l.legacy_client_id
               FROM yr_legacy_sale_line l LEFT JOIN loyalty_motif m ON m.id = l.motif_id
-             WHERE l.product_id IS NULL AND NOT COALESCE(l.is_stamp, FALSE)
+             WHERE l.product_id IS NULL AND NOT COALESCE(l.is_stamp, FALSE) AND NOT COALESCE(l.is_coupon, FALSE)
                AND COALESCE(NULLIF(l.product_ref, ''), l.barcode) IS NOT NULL
              ORDER BY l.date DESC, l.ticket LIMIT %s
         """, [MAX_LINES + 1])

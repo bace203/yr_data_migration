@@ -60,6 +60,15 @@ class PosOrderLine(models.Model):
     yr_fastmag_line_id = fields.Many2one('yr.legacy.sale.line', 'Ligne fastmag', index='btree_not_null',
                                          ondelete='set null', copy=False)
 
+    @api.depends('yr_fastmag_line_id')
+    def _compute_qty_delivered(self):
+        """Tickets of the fastmag history have no delivery in Posify (no stock is moved) but they were handed to
+        the customer: counted as delivered, else the sales analysis shows them « à livrer » / not delivered."""
+        history = self.filtered(lambda line: line.yr_fastmag_line_id or line.order_id.yr_fastmag_ticket)
+        for line in history:
+            line.qty_delivered = line.qty
+        return super(PosOrderLine, self - history)._compute_qty_delivered()
+
 
 class PosSession(models.Model):
     _inherit = 'pos.session'

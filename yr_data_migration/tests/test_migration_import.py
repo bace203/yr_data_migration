@@ -767,11 +767,12 @@ class TestMigrationImport(TransactionCase):
                                self._detail(7199101, day, 'RIM', 'VEND', None, 'ZZ1', 3660009560001, 'CRAYON', 2, 23, 0, 46),
                                self._detail(7199101, day, 'RIM', 'VEND', None, 'ZZ2', 3660009560002, 'CREME', 1, 18, 0, 18)])
         lines = Line.search([('ticket', '=', '7199101')])
-        self.assertEqual(len(lines), 2)
+        self.assertEqual(len(lines), 3)                                  # the coupon is a line of the ticket too
         self.assertIn(first, lines)
         self.assertEqual(first.qty, 2)
-        self.assertEqual(len(set(lines.mapped('sequence'))), 2)
-        self.assertEqual(sorted(lines.mapped('product_ref')), ['ZZ1', 'ZZ2'])
+        self.assertEqual(len(set(lines.mapped('sequence'))), 3)
+        self.assertEqual(sorted(lines.mapped('product_ref')), ['Y13051967', 'ZZ1', 'ZZ2'])
+        self.assertEqual(lines.filtered('is_coupon').product_ref, 'Y13051967')
         self.assertIn('manquantes', wizard.result)
 
     def test_several_files_in_part_order(self):
@@ -880,6 +881,36 @@ class TestMigrationImport(TransactionCase):
         self.assertIn('yr_store_sort', self.env['res.company']._fields)
         self.assertTrue(self.env['res.company'].search([], order='yr_store_sort, id'))      # sortable: stored
 
+    def test_coupon_line_lowers_the_ticket(self):
+        """Ticket YR_CARR/1015656 of the « base commerciale »: shampoo 27 + timbre 0,1 - coupon 2,71 = 24,39; the
+        amounts keep their 3 decimals; the history lines count as delivered (no delivery in Posify)."""
+        day = datetime.combine(date.today() - timedelta(days=5), datetime.min.time())
+        header = DETAIL_HEADER + ['Prix net']
+        row = lambda *args, net=None, reason=None: self._detail(*args, reason) + [net]      # noqa: E731
+        wizard = self._import([
+            header,
+            row(1015656, day, 'RIM_T', 'RIM', None, 'COUPON', None, 'COUPON', 1, '-2.71', 0, -2.71, net=0,
+                reason='COUPON(10.00%)'),
+            row(1015656, day, 'RIM_T', 'RIM', None, 100191978, None, 'SHAMPOOING RECONSTITUANT', 1, 27, 0, 27,
+                net=13.174),
+            row(1015656, day, 'RIM_T', 'RIM', None, 'DTT', None, 'DROIT DE TIMBRE', 1, 0.1, 0, 0.1, net=0.1)])
+        Line = self.env['yr.legacy.sale.line']
+        lines = Line.search([('ticket', '=', '1015656')])
+        self.assertEqual(len(lines), 3, wizard.result)
+        coupon = lines.filtered('is_coupon')
+        self.assertEqual((coupon.amount, coupon.price_unit, coupon.reason), (-2.71, -2.71, 'COUPON(10.00%)'))
+        self.assertAlmostEqual(sum(lines.mapped('amount')), 24.39, places=3)
+        self.assertEqual(lines.filtered(lambda l: l.product_ref == '100191978').net_price, 13.174)   # 3 decimals kept
+        self.assertFalse(self.env['yr.unknown.article'].search([('code', '=', 'COUPON')])
+                         if 'yr.unknown.article' in self.env else False)
+        Line._yr_make_pos_orders()
+        order = lines.pos_order_id
+        self.assertEqual(len(order), 1)
+        self.assertAlmostEqual(order.amount_total, 24.39, places=3)
+        coupon_line = order.lines.filtered(lambda l: l.product_id.default_code == 'FASTMAG-COUPON')
+        self.assertEqual((coupon_line.qty, coupon_line.price_subtotal_incl), (1, -2.71))
+        self.assertEqual(order.lines.mapped('qty_delivered'), order.lines.mapped('qty'))      # counted as delivered
+
     def test_coupons_skipped_and_motifs(self):
         day = datetime.combine(date.today() - timedelta(days=2), datetime.min.time())
         rows = [DETAIL_HEADER,
@@ -892,7 +923,8 @@ class TestMigrationImport(TransactionCase):
                              'CADEAU_PTS')]
         wizard = self._import(rows)
         lines = self.env['yr.legacy.sale.line'].search([('ticket', '=', '7199001')])
-        self.assertEqual(sorted(lines.mapped('product_ref')), ['100000000', 'Y88074', 'ZZ1', 'ZZ2'])      # only the « coupon » label is left out
+        self.assertEqual(sorted(lines.mapped('product_ref')), ['100000000', 'Y13051967', 'Y88074', 'ZZ1', 'ZZ2'])
+        self.assertEqual(lines.filtered('is_coupon').mapped('product_ref'), ['Y13051967'])   # the « coupon » label
         self.assertIn('coupon', wizard.result.lower())
         motifs = lines.mapped('motif_id')
         self.assertEqual(sorted(motifs.mapped('name')), ['CADEAU_PTS', 'ECHANGE', 'Gratuité (déduite)', 'Remise (déduite)'])   # + the Y… article, the free bon d'achat
